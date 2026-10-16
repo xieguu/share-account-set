@@ -1,0 +1,4 @@
+{$RELAY_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy relayhub:3410
+}
