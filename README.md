@@ -10,6 +10,7 @@
     <img src="https://img.shields.io/badge/Playwright-1.61.1-2ead33" alt="Playwright 1.61.1">
   </p>
   <p>
+    <a href="https://xieguu.github.io/share-account-set/">在线展示</a> ·
     <a href="#quick-start">快速开始</a> ·
     <a href="#preview">界面预览</a> ·
     <a href="#how-it-works">工作原理</a> ·
@@ -18,6 +19,8 @@
     <a href="#roadmap">路线图</a>
   </p>
 </div>
+
+此为 `page` 展示分支，完整项目继承自 `main`。GitHub Pages 从 `docs/` 发布静态介绍页；配置与更新方式见 [Pages 运维说明](docs/PAGES.md)。
 
 **RelayHub 是一个可自托管的多用户远程浏览器工作台。** 管理员在服务器浏览器中登录网站，为成员分配账号环境；成员打开 RelayHub，就能在网页里操作各自的远程页面，保留原网站的界面与交互。
 

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RelayHub：登录一次，每个人操作自己的远程页面。共享持久化登录、独立页面操控、管理员统一管理。">
+  <meta name="theme-color" content="#173d32">
+  <title>RelayHub · 一个登录环境，每个人的工作窗口</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./pages.css">
+  <script src="./pages.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要内容</a>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="RelayHub 首页"><img src="./favicon.svg" width="30" height="30" alt=""><span>RelayHub<span class="brand-dot">.</span></span></a>
+    <nav aria-label="主要导航">
+      <a href="#workspace">工作空间</a>
+      <a href="#principle">工作原理</a>
+      <a href="#start">开始使用</a>
+    </nav>
+    <a class="source-link" href="https://github.com/xieguu/share-account-set">GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="small-diamond" aria-hidden="true">◇</span> YOUR SHARED BROWSER WORKSPACE</p>
+        <h1 id="hero-title">共享一个登录。<br><span>各自掌控页面。</span></h1>
+        <p class="hero-description">把网站留在真实浏览器里，把独立的工作窗口交给每个人。<br class="desktop-break">管理员登录一次，成员在自己的页面中点击、输入、探索。</p>
+        <div class="hero-actions"><a class="button primary" href="#start">部署你的工作台 <span aria-hidden="true">↗</span></a><a class="text-link" href="#workspace">看看实际界面 <span aria-hidden="true">↓</span></a></div>
+        <p class="preview-note"><span>GitHub Pages</span> 项目展示页 · 真实远程操控需启动服务器端服务</p>
+      </div>
+      <div class="session-map" aria-label="一个共享登录环境，连接到两个独立成员页面">
+        <div class="map-caption"><span>SESSION / SHARED</span><span>01 → MANY</span></div>
+        <div class="shared-account"><div class="account-icon" aria-hidden="true">◈</div><div><strong>一个账号环境</strong><span>持久化登录 · 共用网站会话</span></div><span class="tag">共享</span></div>
+        <div class="connectors" aria-hidden="true"><i></i><i></i></div>
+        <div class="member-pages">
+          <div class="member-page"><div class="mini-bar"><i></i><i></i><i></i><span>PAGE A</span></div><div class="mini-content"><span class="avatar">A</span><strong>成员 A</strong><span>自己的画面与输入</span><div class="mini-lines"><i></i><i></i></div></div><div class="page-label"><span aria-hidden="true">↗</span> 独立搜索与导航</div></div>
+          <div class="member-page second"><div class="mini-bar"><i></i><i></i><i></i><span>PAGE B</span></div><div class="mini-content"><span class="avatar">B</span><strong>成员 B</strong><span>自己的画面与输入</span><div class="mini-lines"><i></i><i></i></div></div><div class="page-label"><span aria-hidden="true">↗</span> 独立编辑与操作</div></div>
+        </div>
+        <div class="map-bottom"><span>同一登录状态</span><span aria-hidden="true">/</span><span>不同工作进度</span></div>
+      </div>
+    </section>
+
+    <div class="foundation wrap" aria-label="项目技术组成"><span>真实浏览器，直接交互。</span><div><span>Chromium</span><span>Playwright / CDP</span><span>TypeScript</span><span>自托管</span></div></div>
+
+    <section id="workspace" class="workspace-section section wrap" aria-labelledby="workspace-title">
+      <div class="section-heading"><div><p class="eyebrow">01 / THE WORKSPACE</p><h2 id="workspace-title">所有环境，一个工作台。</h2></div><p>创建账号环境、分配成员、查看运行窗口。<br>把重复登录留给服务器，把操作空间留给成员。</p></div>
+      <figure class="product-shot"><div class="shot-bar"><span class="window-dots" aria-hidden="true">● ● ●</span><span>RelayHub / 管理工作台</span><span class="shot-badge">真实测试截图</span></div><img src="./images/dashboard.png" width="1440" height="1000" alt="RelayHub 账号环境管理页面，包含环境配置、运行窗口、成员管理和操作记录" fetchpriority="high"><figcaption>本地运行截图。测试环境中的端口与账号用于验证共享会话。</figcaption></figure>
+      <div class="feature-grid">
+        <article><span class="feature-number">01</span><h3>共享登录，独立窗口</h3><p>同一环境下共享网站登录状态，每位成员拥有自己的页面、导航和输入通道。</p></article>
+        <article><span class="feature-number">02</span><h3>保留网站本来的样子</h3><p>服务器运行真实 Chromium，传输页面画面，直接使用原网站已有的功能与交互。</p></article>
+        <article><span class="feature-number">03</span><h3>管理权始终在手</h3><p>分配环境、只读观察、收回操控权、释放窗口。无连接窗口可按配置自动回收。</p></article>
+      </div>
+    </section>
+
+    <section id="principle" class="principle-band">
+      <div class="wrap principle-content"><div><p class="eyebrow">02 / ONE SESSION, MANY PAGES</p><h2>同一个账号。<br>各自的工作进度。</h2><p>一个持久化 BrowserContext 保存登录，多个 Page 分别接收成员操作。鼠标和键盘按页面定向发送。</p><p class="data-note">共享登录也意味着共享网站账号的数据与权限。页面操作独立，网站内的历史、文件和额度仍可能共用。</p></div><ol class="flow"><li><span>01</span><div><strong>管理员登录网站</strong><p>创建环境，保存持久化浏览器资料。</p></div></li><li><span>02</span><div><strong>给成员分配环境</strong><p>每个人进入自己独立的远程窗口。</p></div></li><li><span>03</span><div><strong>各自点击、输入、导航</strong><p>画面和操作归属各自的页面。</p></div></li></ol></div>
+    </section>
+
+    <section class="remote-section section wrap" aria-labelledby="remote-title">
+      <div class="remote-copy"><p class="eyebrow">03 / YOUR OWN WINDOW</p><h2 id="remote-title">熟悉的网页。<br>独立的操控体验。</h2><p>支持鼠标、滚轮、键盘、中文输入与文本粘贴。关联弹窗跟随发起它的窗口，临时断线后可重新连接。</p><dl class="quality-list"><div><dt>4 / 8 / 15 FPS</dt><dd>三档目标捕获频率</dd></div><div><dt>1280 × 800</dt><dd>当前远程画布尺寸</dd></div><div><dt>JPEG / WebSocket</dt><dd>静态帧去重 · 逐连接确认</dd></div></dl><p class="muted small">当前版本无音频。实际帧率取决于页面变化、网络与渲染负载。</p></div>
+      <figure class="remote-shot"><img src="./images/remote-window.png" width="1440" height="1000" loading="lazy" alt="成员的远程浏览器窗口，显示共享测试账号、独立文本输入、画质切换和重新连接按钮"><figcaption>真实远程窗口截图 · 内置会话验证站</figcaption></figure>
+    </section>
+
+    <section id="start" class="start-section wrap" aria-labelledby="start-title">
+      <div><p class="eyebrow">04 / MAKE IT YOURS</p><h2 id="start-title">从你的第一扇窗口开始。</h2><p>准备 Node.js 24+，运行项目。内置验证站可以直接检查“两名成员、共享登录、独立操作”。</p><div class="start-links"><a class="text-link" href="https://github.com/xieguu/share-account-set/blob/main/README.md">阅读完整部署文档 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/xieguu/share-account-set/blob/main/README.en.md">English README <span aria-hidden="true">↗</span></a></div></div>
+      <div class="terminal"><div class="terminal-bar"><span>TERMINAL / QUICK START</span><button type="button" id="copy-command" aria-label="复制启动命令">复制命令</button></div><pre><code id="install-command">git clone https://github.com/xieguu/share-account-set.git
+cd share-account-set
+npm ci
+npm run setup
+npx playwright install chromium
+npm run dev</code></pre><div class="terminal-footer"><span aria-hidden="true">↗</span> 启动后访问 http://127.0.0.1:3410</div><p id="copy-status" class="sr-only" role="status" aria-live="polite"></p></div>
+    </section>
+
+    <section class="project-status wrap" aria-label="当前项目状态"><div><span class="status-label">项目状态 / 0.1</span><h3>核心链路已运行，更多能力继续验证。</h3></div><p>本地浏览器测试 <strong>17 项通过</strong>。已验证共享登录、独立输入、权限、重连和画面流控；音频、WebRTC 与多节点调度尚未实现。</p><a class="text-link" href="https://github.com/xieguu/share-account-set/blob/main/docs/VERIFICATION.md">查看验证记录 ↗</a></section>
+  </main>
+
+  <footer class="site-footer wrap"><a class="brand" href="./"><img src="./favicon.svg" width="26" height="26" alt=""><span>RelayHub.</span></a><span>共享登录 · 独立页面 · 自己部署</span><div><a href="https://github.com/xieguu/share-account-set/tree/page">page 分支</a><a href="https://github.com/xieguu/share-account-set/issues">反馈</a><a href="https://github.com/xieguu/share-account-set/blob/main/THIRD_PARTY_NOTICES.md">第三方组件</a></div></footer>
+</body>
+</html>

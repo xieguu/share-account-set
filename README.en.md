@@ -10,6 +10,7 @@
     <img src="https://img.shields.io/badge/Playwright-1.61.1-2ead33" alt="Playwright 1.61.1">
   </p>
   <p>
+    <a href="https://xieguu.github.io/share-account-set/">Project preview</a> ·
     <a href="#quick-start">Quick start</a> ·
     <a href="#preview">Preview</a> ·
     <a href="#how-it-works">How it works</a> ·
@@ -18,6 +19,8 @@
     <a href="#roadmap">Roadmap</a>
   </p>
 </div>
+
+This is the `page` branch, retaining the complete application from `main`. GitHub Pages publishes a static project preview from `docs/`; see [Pages operations](docs/PAGES.md) for configuration and updates.
 
 **RelayHub is a self-hosted workspace for multi-user remote browsing.** An administrator signs in to a website in a server-side browser and grants members access to that account environment. Each member opens their own remote page in RelayHub, using the original website interface.
 
