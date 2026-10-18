@@ -1,3 +1,5 @@
+import { api, initConnection, getConnection, websocketUrl } from './connection.js';
+
 const $ = selector => document.querySelector(selector);
 const params = new URLSearchParams(location.search);
 const sessionId = params.get('session'), observe = params.has('view');
@@ -93,10 +95,7 @@ async function drawFrame(frame) {
   }
 }
 async function inspectSession() {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { cache: 'no-store' });
-  const body = await response.json();
-  if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
-  return body.session;
+  return (await api(`/sessions/${encodeURIComponent(sessionId)}`)).session;
 }
 function scheduleReconnect(reason) {
   if (retryAttempt >= retries.length) {
@@ -152,9 +151,12 @@ async function connect(automatic = false) {
   placeholder('正在连接远程浏览器', '正在验证权限并建立画面通道。', true);
   try {
     await closePrevious(ws);
+    await initConnection();
+    $('#viewer-backend').textContent = getConnection().backend || '未设置服务';
     await inspectSession();
+    const url = await websocketUrl(sessionId, observe ? 'view' : 'control');
     if (current !== generation) return;
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/sessions/${encodeURIComponent(sessionId)}?mode=${observe ? 'view' : 'control'}`);
+    const socket = new WebSocket(url);
     ws = socket; socket.binaryType = 'blob';
     let frameMeta;
     socket.onopen = () => send({ type: 'visibility', visible: !document.hidden }, socket);
@@ -177,7 +179,8 @@ async function connect(automatic = false) {
     socket.onclose = event => void disconnected(event, current);
     socket.onerror = () => { if (current === generation) $('#mode').textContent = '● 正在检查连接'; };
   } catch (error) {
-    if ([401, 403, 404].includes(error.status)) placeholder('无法连接窗口', error.message);
+    if (current !== generation) return;
+    if ([401, 403, 404, 409].includes(error.status) || ['BACKEND_REQUIRED', 'CONFIG_ERROR', 'INVALID_BACKEND', 'STORAGE_ERROR'].includes(error.code)) placeholder('无法连接窗口', error.message);
     else scheduleReconnect(error.message);
   } finally { connecting = false; $('#reconnect').disabled = false; }
 }

@@ -3,6 +3,7 @@ data
 .env
 .git
 dist
+.pages
 vendor
 test-results
 *.log

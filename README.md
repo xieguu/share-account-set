@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/Playwright-1.61.1-2ead33" alt="Playwright 1.61.1">
   </p>
   <p>
-    <a href="https://xieguu.github.io/share-account-set/">在线展示</a> ·
+    <a href="https://xieguu.github.io/share-account-set/app/">在线工作台</a> ·
     <a href="#quick-start">快速开始</a> ·
     <a href="#preview">界面预览</a> ·
     <a href="#how-it-works">工作原理</a> ·
@@ -20,7 +20,7 @@
   </p>
 </div>
 
-此为 `page` 展示分支，完整项目继承自 `main`。GitHub Pages 从 `docs/` 发布静态介绍页；配置与更新方式见 [Pages 运维说明](docs/PAGES.md)。
+此为 `page` 分支，包含可连接独立后端的 Pages 工作台。根目录是项目介绍，`/app/` 是实际操作入口；部署方式见 [Pages 运维说明](docs/PAGES.md)。
 
 **RelayHub 是一个可自托管的多用户远程浏览器工作台。** 管理员在服务器浏览器中登录网站，为成员分配账号环境；成员打开 RelayHub，就能在网页里操作各自的远程页面，保留原网站的界面与交互。
 
@@ -38,7 +38,7 @@
 需要 **Node.js 24 或更高版本**、npm 和 Git。在 Windows PowerShell、macOS 或 Linux 终端中执行：
 
 ```bash
-git clone https://github.com/xieguu/share-account-set.git
+git clone -b page https://github.com/xieguu/share-account-set.git
 cd share-account-set
 npm ci
 npm run setup
@@ -66,7 +66,20 @@ npx playwright install --with-deps chromium
 4. 使用两个独立浏览器配置文件或不同浏览器分别登录成员账号，各自打开窗口。
 5. 两个页面都会看到 `demo-admin` 已登录；分别输入文字、点击计数、导航和打开弹窗，观察操作只影响所属页面。
 
-两个普通标签页会共用 RelayHub 门户 Cookie，不能用来模拟两个不同成员。管理员的远程窗口也计入环境的并发上限。
+同域部署的普通标签页会共用 RelayHub 门户 Cookie；验证多成员时使用独立浏览器配置。Pages 模式的登录保存在每个标签页的会话存储中。管理员的远程窗口也计入环境的并发上限。
+
+### 使用 Pages 工作台
+
+后端需要运行此 `page` 分支。将后端部署到自己的 HTTPS 地址，并设置：
+
+```dotenv
+RELAY_ORIGIN=https://relay.example.com
+RELAY_FRONTEND_ORIGINS=https://xieguu.github.io
+```
+
+重启后端后，打开 [在线工作台](https://xieguu.github.io/share-account-set/app/)，点击“设置服务”，填写 `https://relay.example.com`。连接检查通过后，用该后端的 RelayHub 成员账号登录，即可管理环境、打开和操控自己的窗口。
+
+Pages 提供前端，API 和 WebSocket 连接上述后端。成员与配置写入后端 SQLite，网站登录状态保存在后端 Chromium profile。未配置服务时会明确显示未连接；当前仓库不提供默认公共后端。详细部署、登录机制与排错见 [docs/PAGES.md](docs/PAGES.md)。
 
 <a id="preview"></a>
 ## 界面预览
@@ -96,6 +109,7 @@ npx playwright install --with-deps chromium
 | 成员权限 | 创建成员、分配或撤销环境权限、停用账号；撤销权限会关闭对应窗口 |
 | 资源回收 | 无连接窗口默认保留 15 分钟；无窗口环境闲置后关闭浏览器 |
 | 操作记录 | 记录登录、授权、控制权和窗口生命周期操作 |
+| Pages 工作台 | 配置独立后端、检查连接、跨域登录、远程窗口；同域模式继续使用 Cookie |
 
 ### 画面与输入优化
 
@@ -145,7 +159,7 @@ flowchart TB
 | 第三方网站账号权限与服务端数据 | 仍属于同一账号，可能互相可见或影响 |
 | RelayHub 门户账号与授权 | 分别认证，按成员检查窗口所有权与环境权限 |
 
-门户使用 HttpOnly Cookie 和服务端登录会话，密码以 scrypt 派生值保存，登录 Token 以哈希保存。退出只撤销当前登录的连接；停用成员会撤销其登录并关闭窗口。审计表不记录键盘内容或截图；浏览器配置目录仍会保存网站自身的存储和缓存。
+同域门户使用 HttpOnly Cookie；Pages 使用当前标签页 `sessionStorage` 中的 Bearer Token，跨站请求不依赖 Cookie。远程窗口通过 30 秒有效、单次使用的票据连接 WebSocket，长期登录 Token 不进入 URL。密码以 scrypt 派生值保存，数据库中的登录 Token 以哈希保存。退出只撤销当前登录的连接；停用成员会撤销其登录并关闭窗口。审计表不记录键盘内容或截图；浏览器配置目录仍会保存网站自身的存储和缓存。
 
 当前实现采用 **TypeScript + Hono + SQLite + Playwright/CDP + 原生 Web 前端**。这个版本无需 PostgreSQL、Redis 或独立前端构建服务。
 
@@ -174,7 +188,8 @@ https://api.example.com
 | --- | --- |
 | `RELAY_HOST` | `127.0.0.1`；Compose 内覆盖为 `0.0.0.0` |
 | `RELAY_PORT` | `3410` |
-| `RELAY_ORIGIN` | `http://127.0.0.1:3410`；必须与用户实际访问来源一致 |
+| `RELAY_ORIGIN` | `http://127.0.0.1:3410`；后端对外来源，也是同域门户入口 |
+| `RELAY_FRONTEND_ORIGINS` | 默认空；允许访问后端的独立前端来源，以逗号分隔，不含路径、尾斜杠或通配符 |
 | `RELAY_DATA_DIR` | `./data`，保存数据库和浏览器配置 |
 | `RELAY_ADMIN_USER` | `admin`，用于首次初始化 |
 | `RELAY_ADMIN_PASSWORD` | setup 随机生成，至少 12 字符，用于首次初始化 |
@@ -186,7 +201,7 @@ https://api.example.com
 | `RELAY_LAB_PORT` | `3411` |
 | `RELAY_DOMAIN` | 仅 HTTPS Compose 使用，例如 `relay.example.com` |
 
-`RELAY_ORIGIN` 参与 HTTP 写请求和 WebSocket 的来源校验。`localhost` 与 `127.0.0.1`、不同端口以及 HTTP/HTTPS 均视为不同来源。更改访问地址时需要同步修改并重启。
+`RELAY_ORIGIN` 和 `RELAY_FRONTEND_ORIGINS` 参与 HTTP 与 WebSocket 来源校验。`localhost` 与 `127.0.0.1`、不同端口以及 HTTP/HTTPS 均视为不同来源。更改访问地址时需要同步修改并重启。
 
 ```text
 data/
@@ -256,7 +271,7 @@ npm test
 npm run build
 ```
 
-2026-10-17，本地 Windows / Node.js 24.14.0 / Playwright 1.61.1 环境中的测试结果为 **17 passed，0 failed**。测试启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
+2026-10-19，本地 Windows / Node.js 24.14.0 / Playwright 1.61.1 环境中的测试结果为 **29 passed，0 failed**。测试启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
 
 - 同一登录 Cookie 与 LocalStorage 共享，停止后重启仍保留；
 - 多成员画面、输入、导航和弹窗归属；
@@ -264,6 +279,7 @@ npm run build
 - 静态画面去重、慢客户端确认机制、画质切换、后台暂停；
 - 慢导航期间的心跳、旧页面输入拒绝、断线恢复和迟到帧处理；
 - 管理表单、环境编辑、中文输入、快捷键、多行输入及移动端工作台布局。
+- Pages 子路径部署、跨站无 Cookie 登录、票据有效期/绑定/重放拒绝，以及两个成员通过独立前端共享网站登录并分别操控。
 
 完整范围和产物位置见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。这轮验证使用本地测试站；第三方网站兼容性、真实公网网络和长时间负载需要单独测量。
 
@@ -288,6 +304,7 @@ npm run build
 - [x] 门户认证、成员授权、管理员观察与接管
 - [x] 流控、画质选择、后台暂停与连接恢复
 - [x] 环境编辑、闲置回收与自动化验证
+- [x] Pages 连接独立后端、跨域认证与一次性窗口票据
 - [ ] Docker / Ubuntu / 公网 HTTPS 部署验收
 - [ ] 针对实际网站的兼容性和并发容量测试
 - [ ] 文件通道、网页对话框与更完整的剪贴板交互
@@ -301,6 +318,9 @@ npm run build
 | 路径 | 职责 |
 | --- | --- |
 | [src/app.ts](src/app.ts) | HTTP API、认证、权限、WebSocket 接入 |
+| [src/connection-auth.ts](src/connection-auth.ts) | 一次性 WebSocket 票据、绑定、过期与数量限制 |
+| [public/connection.js](public/connection.js) | 服务配置、认证、API 与窗口连接 |
+| [scripts/build-pages.mjs](scripts/build-pages.mjs) | 仅打包公开前端文件到 `.pages/` |
 | [src/browser.ts](src/browser.ts) | 账号环境、窗口、标签页、输入排序与回收 |
 | [src/frame-stream.ts](src/frame-stream.ts) | 捕获、去重、逐连接确认与背压 |
 | [src/store.ts](src/store.ts) | SQLite、成员、授权、登录会话与审计 |
@@ -309,7 +329,7 @@ npm run build
 | [src/lab.ts](src/lab.ts) | 独立来源的共享登录验证站 |
 | [tests/](tests/) | 浏览器集成与界面测试 |
 
-已有前端可以通过 `/api/environments`、`/api/sessions` 与 `/ws/sessions/:id` 接入。WebSocket 依赖同源门户 Cookie；画面以 JSON 帧头加二进制 JPEG 发送，客户端需在处理后发送 `frame_ack`。消息字段以 [protocol.ts](src/protocol.ts) 和 [viewer.js](public/viewer.js) 为准。
+已有前端可以通过 `/api/environments`、`/api/sessions` 与 `/ws/sessions/:id` 接入。同域 WebSocket 使用门户 Cookie；跨域客户端先使用 Bearer Token 请求 `POST /api/sessions/:id/ticket`，再以票据建立连接，详见 [Pages 接入协议](docs/PAGES.md#连接协议)。画面以 JSON 帧头加二进制 JPEG 发送，客户端需在处理后发送 `frame_ack`。消息字段以 [protocol.ts](src/protocol.ts) 和 [viewer.js](public/viewer.js) 为准。
 
 ## 反馈与贡献
 

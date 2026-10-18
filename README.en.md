@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/Playwright-1.61.1-2ead33" alt="Playwright 1.61.1">
   </p>
   <p>
-    <a href="https://xieguu.github.io/share-account-set/">Project preview</a> ·
+    <a href="https://xieguu.github.io/share-account-set/app/">Online workspace</a> ·
     <a href="#quick-start">Quick start</a> ·
     <a href="#preview">Preview</a> ·
     <a href="#how-it-works">How it works</a> ·
@@ -20,7 +20,7 @@
   </p>
 </div>
 
-This is the `page` branch, retaining the complete application from `main`. GitHub Pages publishes a static project preview from `docs/`; see [Pages operations](docs/PAGES.md) for configuration and updates.
+The `page` branch includes a Pages workspace that connects to your own backend. The site root introduces the project; `/app/` is the functional workspace. See [Pages operations](docs/PAGES.md) for configuration and deployment.
 
 **RelayHub is a self-hosted workspace for multi-user remote browsing.** An administrator signs in to a website in a server-side browser and grants members access to that account environment. Each member opens their own remote page in RelayHub, using the original website interface.
 
@@ -38,7 +38,7 @@ The current implementation runs real Chromium and includes screen streaming, rem
 Install **Node.js 24 or later**, npm, and Git. Run in Windows PowerShell, macOS, or Linux:
 
 ```bash
-git clone https://github.com/xieguu/share-account-set.git
+git clone -b page https://github.com/xieguu/share-account-set.git
 cd share-account-set
 npm ci
 npm run setup
@@ -66,7 +66,20 @@ The default configuration enables a local verification website:
 4. Sign in as each member using separate local browser profiles or different browsers, then open their remote windows.
 5. Both pages recognize `demo-admin`. Type different text, increment counters, navigate, and open popups to verify that page operations remain separate.
 
-Two ordinary local tabs share the portal's login cookie and cannot represent two different members. The administrator's remote window also counts toward the environment's session limit.
+Same-origin portal tabs share a login cookie; use independent browser profiles for the multi-member check. Pages mode keeps each tab's login in session storage. The administrator's remote window also counts toward the environment's session limit.
+
+### Use the Pages workspace
+
+Deploy this `page` branch as a backend at your own HTTPS address and configure:
+
+```dotenv
+RELAY_ORIGIN=https://relay.example.com
+RELAY_FRONTEND_ORIGINS=https://xieguu.github.io
+```
+
+Restart the backend, open the [online workspace](https://xieguu.github.io/share-account-set/app/), and choose **设置服务** (set service). Enter `https://relay.example.com`; after the connection check, sign in with a RelayHub account from that backend and open your remote window.
+
+Pages serves the frontend. API and WebSocket requests go to your backend, where SQLite stores members and configuration and Chromium profiles retain website login state. No default public backend is provided. Missing configuration and failed connections are shown explicitly. See [docs/PAGES.md](docs/PAGES.md) for deployment, authentication, and troubleshooting.
 
 <a id="preview"></a>
 ## Preview
@@ -147,7 +160,7 @@ An **environment** owns a website account's browser profile. A **member window**
 | Website permissions and server-side data | Belong to the shared account |
 | RelayHub login and grants | Independently authenticated and checked per member |
 
-Portal authentication uses HttpOnly cookies, scrypt-derived passwords, and hashed login tokens. Logout revokes the current login's connections; disabling a member revokes their logins and closes their windows. Audit records do not contain keyboard content or captured frames. Browser profiles still contain the website's own storage and caches.
+Same-origin authentication uses HttpOnly cookies. Pages uses a Bearer token in the current tab's `sessionStorage`, without cross-site cookies. WebSocket connections use a single-use ticket valid for 30 seconds; long-lived login tokens never appear in connection URLs. Passwords are scrypt-derived and database login tokens are hashed. Logout revokes the current login's connections; disabling a member revokes their logins and closes their windows. Audit records do not contain keyboard content or captured frames. Browser profiles still contain the website's own storage and caches.
 
 The current stack is **TypeScript, Hono, SQLite, Playwright/CDP, and a vanilla web frontend**. PostgreSQL, Redis, and a separate frontend build service are not required.
 
@@ -176,7 +189,8 @@ Setup derives `.env` from [.env.example](.env.example).
 | --- | --- |
 | `RELAY_HOST` | `127.0.0.1`; Compose overrides it to `0.0.0.0` inside the container |
 | `RELAY_PORT` | `3410` |
-| `RELAY_ORIGIN` | `http://127.0.0.1:3410`; must match the browser's actual portal origin |
+| `RELAY_ORIGIN` | `http://127.0.0.1:3410`; the backend's public origin and same-origin portal |
+| `RELAY_FRONTEND_ORIGINS` | Empty by default; comma-separated exact frontend origins, without paths, trailing slashes, or wildcards |
 | `RELAY_DATA_DIR` | `./data` |
 | `RELAY_ADMIN_USER` | `admin`; initial database setup only |
 | `RELAY_ADMIN_PASSWORD` | Randomly generated by setup; minimum 12 characters; initialization only |
@@ -188,7 +202,7 @@ Setup derives `.env` from [.env.example](.env.example).
 | `RELAY_LAB_PORT` | `3411` |
 | `RELAY_DOMAIN` | HTTPS Compose only, for example `relay.example.com` |
 
-HTTP writes and WebSocket upgrades check `RELAY_ORIGIN`. Different hostnames, ports, and schemes are different origins, including `localhost` versus `127.0.0.1`. Update the configuration and restart when changing the access URL.
+HTTP requests and WebSocket upgrades check `RELAY_ORIGIN` and `RELAY_FRONTEND_ORIGINS`. Different hostnames, ports, and schemes are different origins, including `localhost` versus `127.0.0.1`. Update the configuration and restart when changing the access URL.
 
 ```text
 data/
@@ -258,9 +272,9 @@ npm test
 npm run build
 ```
 
-The 2026-10-17 local Windows run with Node.js 24.14.0 and Playwright 1.61.1 reported **17 passed, 0 failed**. Tests use real Chromium, a separate-origin website, and real WebSocket connections.
+The 2026-10-19 local Windows run with Node.js 24.14.0 and Playwright 1.61.1 reported **29 passed, 0 failed**. Tests use real Chromium, separate-origin websites, and real WebSocket connections, including a static Pages workspace served on a different site from the backend.
 
-Coverage includes shared login and persistent storage; independent input, navigation, frames, and popups; ownership and access checks; control revocation; logout; cleanup; frame suppression and acknowledgment; visibility and quality settings; heartbeats during slow navigation; stale-input rejection; manual and automatic reconnection; late decoded frames after disconnection; management forms; Chinese IME; shortcuts; multiline input; and mobile portal layout.
+Coverage includes shared login and persistent storage; independent input, navigation, frames, and popups; ownership and access checks; control revocation; logout; cleanup; frame suppression and acknowledgment; visibility and quality settings; heartbeats during slow navigation; stale-input rejection; reconnection; late decoded frames; management forms; Chinese IME; shortcuts; multiline input; and mobile layout. Pages tests also cover exact CORS origins, cookie-free cross-site login, ticket binding/expiry/replay rejection, two-member remote input, reload, logout, and explicit missing-backend or connection-failure states.
 
 See [docs/VERIFICATION.md](docs/VERIFICATION.md) for scope and artifact locations. Third-party website compatibility, public-network behavior, and sustained capacity require separate measurements.
 
@@ -285,6 +299,7 @@ See [docs/VERIFICATION.md](docs/VERIFICATION.md) for scope and artifact location
 - [x] Portal authentication, grants, observation, and takeover
 - [x] Flow control, quality selection, visibility pause, and reconnection
 - [x] Environment editing, resource cleanup, and automated verification
+- [x] Pages workspace, separate backend authentication, and single-use WebSocket tickets
 - [ ] Docker, Ubuntu, and public HTTPS deployment validation
 - [ ] Real-site compatibility and concurrency measurements
 - [ ] File channels, website dialogs, and richer clipboard interaction
@@ -298,6 +313,9 @@ Unchecked items are future work, without delivery dates.
 | Path | Responsibility |
 | --- | --- |
 | [src/app.ts](src/app.ts) | HTTP API, authentication, authorization, WebSocket connections |
+| [src/connection-auth.ts](src/connection-auth.ts) | One-use WebSocket ticket binding, expiry, and limits |
+| [public/connection.js](public/connection.js) | Backend selection, authentication, API, and window connections |
+| [scripts/build-pages.mjs](scripts/build-pages.mjs) | Builds only public frontend assets into `.pages/` |
 | [src/browser.ts](src/browser.ts) | Environments, sessions, tabs, input ordering, cleanup |
 | [src/frame-stream.ts](src/frame-stream.ts) | Capture, deduplication, acknowledgments, backpressure |
 | [src/store.ts](src/store.ts) | SQLite, members, grants, login sessions, audit |
@@ -306,7 +324,7 @@ Unchecked items are future work, without delivery dates.
 | [src/lab.ts](src/lab.ts) | Separate-origin verification site |
 | [tests/](tests/) | Browser integration and UI tests |
 
-An existing frontend can use `/api/environments`, `/api/sessions`, and `/ws/sessions/:id`. WebSocket authentication uses the same-origin portal cookie. Each frame has a JSON header followed by binary JPEG data; the client sends `frame_ack` after processing. See [protocol.ts](src/protocol.ts) and [viewer.js](public/viewer.js) for the current contract.
+An existing frontend can use `/api/environments`, `/api/sessions`, and `/ws/sessions/:id`. Same-origin WebSockets use the portal cookie. Cross-origin clients first call `POST /api/sessions/:id/ticket` with Bearer authentication, then connect with the returned ticket. See [the connection protocol](docs/PAGES.md#连接协议). Each frame has a JSON header followed by binary JPEG data; the client sends `frame_ack` after processing. See [protocol.ts](src/protocol.ts) and [viewer.js](public/viewer.js) for the current contract.
 
 ## Feedback and contributions
 

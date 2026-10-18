@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { HttpBindings } from '@hono/node-server';
@@ -9,6 +10,7 @@ import type { Config } from './config.js';
 import { Store, type User } from './store.js';
 import { BrowserService } from './browser.js';
 import { AppError, allowedUrl, commandSchema, normalizedOrigin } from './protocol.js';
+import { ConnectionTickets } from './connection-auth.js';
 
 const COOKIE = 'relayhub_session';
 const userSchema = z.object({ username: z.string().regex(/^[a-zA-Z0-9_-]{2,40}$/),
@@ -24,8 +26,11 @@ export function createApp(config: Config) {
   const browsers = new BrowserService(config);
   const app = new Hono<{ Variables: Variables; Bindings: HttpBindings }>();
   const attempts = new Map<string, { count: number; until: number }>();
+  const tickets = new ConnectionTickets();
+  const allowedOrigin = (origin: string | undefined) => Boolean(origin && (origin === config.origin || config.frontendOrigins?.includes(origin)));
   const cleanAttempts = setInterval(() => {
     for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key);
+    tickets.prune();
   }, 60_000);
   cleanAttempts.unref();
 
@@ -42,14 +47,27 @@ export function createApp(config: Config) {
     c.header('X-Frame-Options', 'DENY');
     c.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     if (c.req.path.startsWith('/api/')) c.header('Cache-Control', 'no-store');
-    if (!['GET','HEAD','OPTIONS'].includes(c.req.method) && c.req.header('origin') !== config.origin) {
+    const origin = c.req.header('origin');
+    if ((c.req.path.startsWith('/api/') && origin && !allowedOrigin(origin))
+      || (!['GET','HEAD','OPTIONS'].includes(c.req.method) && !allowedOrigin(origin))) {
       throw new AppError(403, '请求来源不匹配');
     }
     await next();
   });
+  app.use('/api/*', cors({
+    origin: origin => allowedOrigin(origin) ? origin : null,
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
+    maxAge: 600,
+  }));
   app.get('/api/health', c => c.json({ status: 'ok', version: '0.1.0' }));
   app.post('/api/login', async c => {
-    const input = z.object({ username: z.string().max(40), password: z.string().max(256) }).parse(await c.req.json());
+    const input = z.object({ username: z.string().max(40), password: z.string().max(256),
+      authMode: z.enum(['cookie', 'token']).default('cookie') }).parse(await c.req.json());
+    if (c.req.header('origin') !== config.origin && input.authMode !== 'token') {
+      throw new AppError(400, '跨域登录必须使用 authMode: token');
+    }
     const address = c.env?.incoming?.socket?.remoteAddress || 'local';
     const key = `${address}:${input.username}`;
     let entry = attempts.get(key);
@@ -61,13 +79,23 @@ export function createApp(config: Config) {
     const token = store.login(input.username, input.password);
     if (!token) { entry.count++; throw new AppError(401, '用户名或密码不正确'); }
     attempts.delete(key);
-    setCookie(c, COOKIE, token, { httpOnly: true, sameSite: 'Strict', secure: config.origin.startsWith('https:'), path: '/', maxAge: 43_200 });
+    if (input.authMode === 'cookie') setCookie(c, COOKIE, token, { httpOnly: true, sameSite: 'Strict', secure: config.origin.startsWith('https:'), path: '/', maxAge: 43_200 });
     const user = store.authenticate(token)!;
     store.audit(user.id, 'login', user.id);
-    return c.json({ user });
+    return c.json(input.authMode === 'token' ? { user, token } : { user });
   });
   app.use('/api/*', async (c, next) => {
-    const token = getCookie(c, COOKIE);
+    const authorization = c.req.header('authorization');
+    const crossOrigin = Boolean(c.req.header('origin') && c.req.header('origin') !== config.origin);
+    let token: string | undefined;
+    if (authorization !== undefined) {
+      const bearer = /^Bearer ([\w-]{43})$/i.exec(authorization);
+      if (!bearer) throw new AppError(401, 'Authorization 必须使用有效的 Bearer 登录令牌');
+      token = bearer[1];
+    } else {
+      if (crossOrigin) throw new AppError(401, '跨域请求必须提供 Bearer 登录令牌');
+      token = getCookie(c, COOKIE);
+    }
     const user = store.authenticate(token);
     if (!user) throw new AppError(401, '请先登录 RelayHub');
     c.set('user', user);
@@ -76,7 +104,8 @@ export function createApp(config: Config) {
   });
   app.post('/api/logout', c => {
     store.logout(c.get('token'));
-    deleteCookie(c, COOKIE, { path: '/' });
+    tickets.revokeToken(c.get('token'));
+    if (!c.req.header('authorization')) deleteCookie(c, COOKIE, { path: '/' });
     for (const [ws, connection] of connections) if (connection.token === c.get('token')) ws.close(4003, '登录已退出');
     return c.json({ ok: true });
   });
@@ -98,6 +127,14 @@ export function createApp(config: Config) {
     const session = browsers.get(c.req.param('id'), user);
     if (!store.hasAccess(user, session.env.id)) throw new AppError(404, '窗口不存在');
     return c.json({ session: session.summary() });
+  });
+  app.post('/api/sessions/:id/ticket', async c => {
+    const { mode } = z.object({ mode: z.enum(['control', 'view']) }).strict().parse(await c.req.json());
+    const user = c.get('user');
+    const session = browsers.get(c.req.param('id'), user);
+    if (!store.hasAccess(user, session.env.id)) throw new AppError(404, '窗口不存在');
+    if (mode === 'control' && session.controller) throw new AppError(409, '窗口已有操控连接');
+    return c.json(tickets.issue({ token: c.get('token'), sessionId: session.id, mode, origin: c.req.header('origin')! }));
   });
   app.post('/api/sessions', async c => {
     const { environmentId } = z.object({ environmentId: z.string().uuid() }).parse(await c.req.json());
@@ -164,7 +201,7 @@ export function createApp(config: Config) {
   app.post('/api/admin/environments', async c => {
     const input = environmentSchema.parse(await c.req.json());
     const origins = [...new Set(input.allowedOrigins.map(normalizedOrigin))];
-    if (origins.includes(config.origin)) throw new AppError(400, '不能把 RelayHub 管理入口加入远程浏览器环境');
+    if (origins.some(allowedOrigin)) throw new AppError(400, '不能把 RelayHub 门户入口加入远程浏览器环境');
     allowedUrl(input.startUrl, origins);
     const env = store.addEnvironment({ ...input, allowedOrigins: origins });
     store.audit(c.get('user').id, 'environment.create', env.id);
@@ -175,7 +212,7 @@ export function createApp(config: Config) {
     if (!store.environment(id)) throw new AppError(404, '账号环境不存在');
     const input = environmentSchema.parse(await c.req.json());
     const origins = [...new Set(input.allowedOrigins.map(normalizedOrigin))];
-    if (origins.includes(config.origin)) throw new AppError(400, '不能把 RelayHub 管理入口加入远程浏览器环境');
+    if (origins.some(allowedOrigin)) throw new AppError(400, '不能把 RelayHub 门户入口加入远程浏览器环境');
     allowedUrl(input.startUrl, origins);
     await browsers.stopEnvironment(id);
     const env = store.updateEnvironment(id, { ...input, allowedOrigins: origins });
@@ -222,16 +259,26 @@ export function createApp(config: Config) {
     server.on('upgrade', (req, socket, head) => {
       const reject = (status: number) => { socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\n\r\n`); };
       try {
-        if (req.headers.origin !== config.origin) { reject(403); return; }
+        if (!allowedOrigin(req.headers.origin)) { reject(403); return; }
         const url = new URL(req.url || '/', config.origin);
         const match = /^\/ws\/sessions\/([\da-f-]+)$/.exec(url.pathname);
         if (!match?.[1]) { reject(404); return; }
-        const token = req.headers.cookie?.split(';').map(item => item.trim()).find(item => item.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
+        const mode = url.searchParams.get('mode') || 'control';
+        if (!['control', 'view'].includes(mode)) { reject(400); return; }
+        let token: string | undefined;
+        if (url.searchParams.has('ticket')) {
+          token = tickets.consume(url.searchParams.get('ticket')!, {
+            sessionId: match[1], mode: mode as 'control' | 'view', origin: req.headers.origin!,
+          });
+        } else {
+          if (req.headers.origin !== config.origin) { reject(401); return; }
+          token = req.headers.cookie?.split(';').map(item => item.trim()).find(item => item.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
+        }
         const user = store.authenticate(token);
         if (!user || !token) { reject(401); return; }
         const session = browsers.get(match[1], user);
         if (!store.hasAccess(user, session.env.id)) { reject(403); return; }
-        const control = url.searchParams.get('mode') !== 'view';
+        const control = mode === 'control';
         if (control && session.controller) { reject(409); return; }
         wss.handleUpgrade(req, socket, head, ws => {
           try { session.attach(ws, control); }
@@ -272,6 +319,7 @@ export function createApp(config: Config) {
   async function close() {
     clearInterval(heartbeat);
     clearInterval(cleanAttempts);
+    tickets.clear();
     for (const ws of connections.keys()) ws.terminate();
     await browsers.close();
     await new Promise<void>(resolve => wss.close(() => resolve()));

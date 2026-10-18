@@ -2,7 +2,7 @@
 
 [返回 README](../README.md) · [English README](../README.en.md)
 
-验证日期：2026-10-17。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
+验证日期：2026-10-19。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
 
 ## 复现命令与结果
 
@@ -12,7 +12,9 @@
 npm run check
 npm test
 npm run build
+npm run build:pages
 node --check public/app.js
+node --check public/connection.js
 node --check public/viewer.js
 ```
 
@@ -20,13 +22,14 @@ node --check public/viewer.js
 
 ```text
 TypeScript check                         PASS
-Browser integration + UI tests           17 passed, 0 failed
+Browser integration + UI tests           29 passed, 0 failed
 Production build                         PASS
+Pages static artifact                    PASS
 Frontend JavaScript syntax checks        PASS
-Test runner elapsed                      20.4 s
+Test runner elapsed                      26.0 s
 ```
 
-测试数为 Node.js 测试运行器报告值，包含集成测试的父测试、15 个子测试和 1 个界面测试。耗时属于本轮本机运行记录，不是吞吐量或延迟基准。
+测试数为 Node.js 测试运行器报告值：原有集成及界面测试 17 项，跨域配置/票据/API 测试 11 项，Pages 端到端界面测试 1 项。包含父测试。耗时属于本轮本机运行记录，不是吞吐量或延迟基准。
 
 测试使用真实 Chromium 和独立 HTTP 来源的本地站点，没有使用第三方账号。测试站通过真实 HTTP 响应设置 30 天 Cookie。每次运行创建独立数据库、浏览器 profile 和随机端口，不使用项目日常运行的 `data/`。
 
@@ -73,6 +76,28 @@ Test runner elapsed                      20.4 s
 
 中文输入检查包含程序注入的文本与 composition 事件，并不覆盖所有操作系统、输入法和移动端键盘组合。移动布局断言针对门户工作台，不代表完整触屏兼容性验收。
 
+## Pages 与独立后端验证
+
+源文件：[cross-origin.test.ts](../tests/cross-origin.test.ts)、[pages-ui.test.ts](../tests/pages-ui.test.ts)。
+
+| 检查 | 运行时断言 |
+| --- | --- |
+| 配置 | 精确 Origin，拒绝路径、通配符、凭据及含空项的列表 |
+| CORS | 仅允许已配置来源，预检声明允许方法和头，不启用跨站 Cookie |
+| 登录 | Bearer 登录不设置 Cookie；错误 Bearer 不使用已有 Cookie 兜底 |
+| 票据 | 30 秒到期、使用一次、绑定来源/窗口/模式；错误绑定消耗票据；重放被拒绝 |
+| 数量限制 | 每个登录的每个窗口最多 4 张待用票据，全局最多 2,048 张；使用/过期后释放 |
+| 权限变更 | 票据握手时再次检查退出、停用、环境撤权和当前控制连接 |
+| 项目子路径 | 静态产物在 `/share-account-set/app/` 下加载，API/WS 只发往后端 |
+| 实际跨站 | `localhost` 前端连接 `127.0.0.1` 后端，门户无 Cookie，登录信息只存 sessionStorage |
+| 双成员 | 管理员远程登录测试站后，两名成员识别同一账号；经各自画布输入不同文字 |
+| 恢复与退出 | 页面和工作台刷新仍可使用；退出后只关闭该登录的连接，其他成员继续操作 |
+| 错误显示 | 缺少后端时禁用登录；错误路径和离线健康检查显示错误、不保存配置 |
+| 前端产物 | 明确文件清单，构建不包含 `.env`、数据库、profile 或服务端源码 |
+| 移动界面 | 390 像素工作台无横向溢出，可直接退出登录 |
+
+上述跨站端到端测试使用本地 HTTP 回环服务，未连接第三方网站或公网后端。发布后的静态资源检查不等价于公网后端验收。
+
 ## 修复的连接状态问题
 
 浏览器图片解码是异步操作。旧客户端只在开始接收时校验连接，导致连接断开后，尚未完成的解码仍可能绘制画面并隐藏断线提示。
@@ -81,7 +106,7 @@ Test runner elapsed                      20.4 s
 
 ## 静态画面样本
 
-本轮在稳定页面上观察 1,500 ms，测试写出的样本为：
+2026-10-17 的稳定页面记录中，观察 1,500 ms 得到以下样本；本轮完整测试继续验证去重行为，具体计数保存在新的测试目录中：
 
 ```json
 {
@@ -104,9 +129,11 @@ Test runner elapsed                      20.4 s
 | `test-results/dashboard.png` | 管理工作台 |
 | `test-results/remote-window.png` | 真实远程画布与输入结果 |
 | `test-results/mobile.png` | 移动宽度下的工作台 |
+| `test-results/pages-workspace.png`、`pages-remote.png` | 独立静态前端实际连接后端的工作台和画布 |
+| `test-results/pages-mobile.png` | Pages 工作台移动布局 |
 | `test-results/runtime-*/remote-frame.jpg` | WebSocket 收到的 JPEG 样本 |
 | `test-results/runtime-*/static-stream-sample.json` | 本轮静态画面计数 |
-| `test-results/runtime-*/`、`test-results/ui-*/` | 测试专用数据库和浏览器资料 |
+| `test-results/runtime-*/`、`ui-*/`、`pages-*/`、`cross-origin-*/` | 测试专用数据库和浏览器资料 |
 | [docs/images/](images/) | README 使用的已选取界面截图 |
 
 `test-results/` 被 Git 忽略。README 中的截图从成功测试产物复制，未包含实际第三方账号。

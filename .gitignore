@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.pages/
 .env
 data/
 test-results/

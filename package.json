@@ -8,6 +8,7 @@
     "setup": "node scripts/setup.mjs",
     "dev": "node --env-file=.env --import tsx src/index.ts",
     "build": "tsc",
+    "build:pages": "node scripts/build-pages.mjs",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "check": "tsc --noEmit",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts"

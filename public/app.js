@@ -1,29 +1,48 @@
+import { api as request, login, logout, initConnection, getConnection, checkBackend, saveBackend, resetConnection, viewerUrl, reserveViewer } from './connection.js';
+
 const $ = selector => document.querySelector(selector);
 let user, environments = [], sessions = [], members = [], view = 'environments';
-let refreshTimer, toastTimer;
+let refreshTimer, toastTimer, workspaceRevision = 0, refreshSequence = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const titles = {environments:['账号环境','选择一个账号环境，打开属于你的远程窗口。'],sessions:['运行窗口','查看实时连接、继续操作，或释放闲置窗口。'],members:['成员管理','为成员分配账号环境和访问权限。'],audit:['操作记录','查看登录、环境配置和窗口生命周期记录。']};
 async function api(path, options = {}) {
-  const response = await fetch(`/api${path}`, { ...options, headers: {'Content-Type':'application/json',...options.headers} });
-  const result = await response.json();
-  if (!response.ok) {
-    if (response.status === 401 && user) showLogin();
-    throw new Error(result.error || `请求失败 ${response.status}`);
+  try { return await request(path, options); }
+  catch (error) {
+    if (error.status === 401 && user) showLogin();
+    throw error;
   }
-  return result;
 }
 function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,5000); }
-function showLogin() { user=undefined; clearInterval(refreshTimer); $('#workspace').hidden=true; $('#login-screen').hidden=false; }
+function showLogin() {
+  workspaceRevision++; user=undefined; environments=[]; sessions=[]; members=[];
+  clearInterval(refreshTimer); $('#workspace').hidden=true; $('#login-screen').hidden=false;
+  document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
+  for (const key of Object.keys(titles)) $(`#${key}-view`).replaceChildren();
+}
 async function showWorkspace(current) {
+  const started=++workspaceRevision;
   user=current; $('#login-screen').hidden=true; $('#workspace').hidden=false;
   $('#username').textContent=user.username; $('#avatar').textContent=user.username[0].toUpperCase(); $('#role').textContent=user.role==='admin'?'工作空间管理员':'普通成员';
   document.querySelectorAll('.admin-only').forEach(el=>el.hidden=user.role!=='admin');
-  await refresh(); clearInterval(refreshTimer); refreshTimer=setInterval(()=>refresh().catch(error=>toast(error.message)),7000);
+  await setView('environments');
+  if(started!==workspaceRevision) return;
+  clearInterval(refreshTimer); refreshTimer=setInterval(()=>refresh().catch(error=>toast(error.message)),7000);
 }
 async function refresh() {
   if (!user) return;
-  [environments,sessions]=await Promise.all([api('/environments').then(r=>r.environments),api('/sessions').then(r=>r.sessions)]);
-  if (user.role==='admin' && view==='members') members=(await api('/admin/users')).users;
+  const started=workspaceRevision, sequence=++refreshSequence, currentView=view;
+  let result;
+  try {
+    result=await Promise.all([api('/environments'),api('/sessions'),
+      user.role==='admin' && currentView==='members'?api('/admin/users'):null]);
+  } catch(error) {
+    if(started===workspaceRevision) connectionStatus(error.message, false);
+    throw error;
+  }
+  if(started!==workspaceRevision || sequence!==refreshSequence || currentView!==view) return;
+  environments=result[0].environments; sessions=result[1].sessions;
+  if(result[2]) members=result[2].users;
+  connectionStatus('服务已连接', true);
   $('#stat-environments').textContent=environments.length; $('#environment-count').textContent=environments.length;
   $('#stat-sessions').textContent=sessions.length; $('#session-count').textContent=sessions.length;
   $('#stat-connections').textContent=sessions.reduce((sum,s)=>sum+s.clients,0);
@@ -47,7 +66,9 @@ function renderMembers() {
   $('#members-view').innerHTML=table(['成员','角色','账号环境','状态','操作'],members.map(m=>`<tr><td>${esc(m.username)}</td><td>${m.role==='admin'?'管理员':'普通成员'}</td><td>${m.role==='admin'?'全部环境':m.environmentIds.length+' 个环境'}</td><td>${m.enabled?'正常':'已停用'}</td><td>${m.enabled&&m.role!=='admin'?`<button class="secondary" data-action="grants" data-id="${m.id}">分配环境</button>`:''}${m.enabled&&m.id!==user.id?`<button class="danger" data-action="disable" data-id="${m.id}">停用</button>`:''}</td></tr>`));
 }
 async function renderAudit() {
+  const started=workspaceRevision;
   const {entries}=await api('/admin/audit');
+  if(started!==workspaceRevision || view!=='audit') return;
   const labels={'login':'成员登录','session.create':'创建窗口','session.close':'释放窗口','environment.create':'创建环境','environment.update':'编辑环境','environment.stop':'停止环境','environment.delete':'删除环境','user.create':'创建成员','user.disable':'停用成员','grant.add':'分配环境','grant.revoke':'撤销环境权限','control.revoke':'收回操控权'};
   $('#audit-view').innerHTML=entries.length?table(['时间（UTC）','操作','操作者 ID','对象 ID'],entries.map(e=>`<tr><td>${esc(e.at)}</td><td>${esc(labels[e.action]||e.action)}</td><td>${esc(e.userId?.slice(0,8))}</td><td>${esc(e.objectId?.slice(0,32))}</td></tr>`)):'<div class="empty">尚无记录</div>';
 }
@@ -59,7 +80,11 @@ async function setView(next) {
   $('#environment-tools').hidden=view!=='environments'; $('#add-environment').hidden=view!=='environments'||user.role!=='admin'; $('#add-member').hidden=view!=='members';
   await refresh();
 }
-function openViewer(id, observe=false) { window.open(`/viewer.html?session=${encodeURIComponent(id)}${observe?'&view=1':''}`,'_blank','noopener'); }
+function openViewer(id, observe=false) {
+  const viewer=reserveViewer();
+  if(viewer) viewer.location.replace(viewerUrl(id,observe));
+  else toast('浏览器阻止了新窗口，请允许弹出窗口后重试。');
+}
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button'); if(!button) return;
   if(button.dataset.view) { try { await setView(button.dataset.view); } catch(error){toast(error.message);} return; }
@@ -69,15 +94,21 @@ document.addEventListener('click',async event=>{
   try {
     if(action==='start') {
       // Reserve the client tab during the user gesture, before the async browser launch.
-      const viewer=window.open('/viewer.html','_blank'); if(viewer) viewer.opener=null;
+      const viewer=reserveViewer();
       try { const {session}=await api('/sessions',{method:'POST',body:JSON.stringify({environmentId:id})});
-        if(viewer) viewer.location.href=`/viewer.html?session=${session.id}`;
+        if(viewer) viewer.location.replace(viewerUrl(session.id));
         else toast('窗口已创建，请从运行窗口列表连接。');
       } catch(error) { viewer?.close(); throw error; }
     }
     if(action==='connect') openViewer(id);
     if(action==='observe') openViewer(id,true);
-    if(action==='takeover') { await api(`/admin/sessions/${id}/revoke-control`,{method:'POST'}); openViewer(id); }
+    if(action==='takeover') {
+      const viewer=reserveViewer();
+      try { await api(`/admin/sessions/${id}/revoke-control`,{method:'POST'});
+        if(viewer) viewer.location.replace(viewerUrl(id));
+        else toast('控制权已收回，请允许弹出窗口后从列表连接。');
+      } catch(error) { viewer?.close(); throw error; }
+    }
     if(action==='close' && confirm('释放此窗口？当前页面和未保存的输入将关闭。')) await api(`/sessions/${id}`,{method:'DELETE'});
     if(action==='stop' && confirm('停止整个账号环境？该环境的全部窗口将关闭，登录资料会保留。')) await api(`/admin/environments/${id}/stop`,{method:'POST'});
     if(action==='delete-env' && confirm('删除环境配置并关闭全部窗口？磁盘上的浏览器资料会保留。')) await api(`/admin/environments/${id}`,{method:'DELETE'});
@@ -100,10 +131,10 @@ function showGrants(id) {
 }
 $('#login-form').onsubmit=async event=>{
   event.preventDefault(); const form=event.target,button=form.querySelector('button'); button.disabled=true; $('#login-error').textContent='';
-  try { const {user:current}=await api('/login',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(form)))}); form.reset(); await showWorkspace(current); }
+  try { const {user:current}=await login(Object.fromEntries(new FormData(form))); form.reset(); await showWorkspace(current); }
   catch(error){$('#login-error').textContent=error.message;} finally {button.disabled=false;}
 };
-$('#logout').onclick=async()=>{try{await api('/logout',{method:'POST'});showLogin();}catch(error){toast(error.message);}};
+$('#logout').onclick=async()=>{try{await logout();showLogin();}catch(error){toast(error.message);}};
 $('#refresh').onclick=()=>refresh().catch(error=>toast(error.message));
 $('#search').oninput=renderEnvironments;
 function showEnvironment(id) {
@@ -137,4 +168,55 @@ for(const name of ['environment','member']) $(`#${name}-form`).onsubmit=async ev
     form.closest('dialog').close();form.reset();await refresh();toast(name==='environment'?(editId?'环境配置已保存':'账号环境已创建'):'成员已创建');
   }catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}
 };
-try { const {user:current}=await api('/me'); await showWorkspace(current); } catch(error) { showLogin(); if(!error.message.includes('请先登录')) $('#login-error').textContent=error.message; }
+function connectionStatus(message, online) {
+  const connection=getConnection();
+  $('#connection-target').textContent=connection.backend || '尚未设置服务地址';
+  $('#connection-state').textContent=message;
+  $('#workspace-service-status span').textContent=online?'服务已连接':'连接待检查';
+  $('#workspace-service-status').classList.toggle('offline',!online);
+  $('#workspace-service-status').title=connection.backend?`${connection.backend} · ${message}`:message;
+  $('#workspace-backend-button').title=connection.backend || '设置服务地址';
+}
+function enableLogin(enabled) { $('#login-form').querySelectorAll('input,button').forEach(el=>el.disabled=!enabled); }
+function showBackendSettings() {
+  const connection=getConnection();
+  $('#backend-address').value=connection.backend || '';
+  $('#backend-address').readOnly=connection.requireBackend===false;
+  $('#backend-error').textContent='';
+  $('#backend-status').textContent=connection.requireBackend===false?'当前工作台由此服务提供。连接其他服务请使用 Pages 工作台。':'';
+  $('#backend-dialog').showModal();
+}
+$('#backend-config-button').onclick=showBackendSettings;
+$('#workspace-backend-button').onclick=showBackendSettings;
+$('#backend-form').onsubmit=async event=>{
+  event.preventDefault(); const button=$('#backend-save'); button.disabled=true;
+  $('#backend-error').textContent=''; $('#backend-status').textContent='正在检查服务连接…';
+  try {
+    const value=$('#backend-address').value;
+    const health=await checkBackend(value);
+    const changed=new URL(value.trim()).origin!==getConnection().backend;
+    if(changed && user) await logout();
+    await saveBackend(value);
+    if(changed) showLogin();
+    enableLogin(true); connectionStatus(`服务已连接 · v${health.version}`,true);
+    $('#backend-dialog').close(); $('#login-error').textContent='';
+  } catch(error) { $('#backend-error').textContent=error.message; $('#backend-status').textContent='连接设置未保存'; }
+  finally { button.disabled=false; }
+};
+$('#backend-reset').onclick=async()=>{
+  try { if(user) await logout(); resetConnection(); location.reload(); }
+  catch(error) { $('#backend-error').textContent=error.message; }
+};
+try {
+  const connection=await initConnection();
+  if(!connection.backend) connectionStatus('请设置管理员提供的 RelayHub 服务地址。',false);
+  else {
+    const health=await checkBackend(connection.backend);
+    enableLogin(true); connectionStatus(`服务已连接 · v${health.version}`,true);
+    if(connection.authMode==='cookie' || connection.hasToken) {
+      try { const {user:current}=await api('/me'); await showWorkspace(current); }
+      catch(error) { showLogin(); if(error.status!==401) throw error; }
+    }
+  }
+} catch(error) { showLogin(); connectionStatus(error.message,false); $('#login-error').textContent=error.message; }
+finally { $('#backend-config-button').disabled=false; }
