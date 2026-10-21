@@ -3,6 +3,7 @@ import { api as request, login, logout, initConnection, getConnection, checkBack
 const $ = selector => document.querySelector(selector);
 let user, environments = [], sessions = [], members = [], view = 'environments';
 let refreshTimer, toastTimer, workspaceRevision = 0, refreshSequence = 0;
+let backendOperation;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const titles = {environments:['账号环境','选择一个账号环境，打开属于你的远程窗口。'],sessions:['运行窗口','查看实时连接、继续操作，或释放闲置窗口。'],members:['成员管理','为成员分配账号环境和访问权限。'],audit:['操作记录','查看登录、环境配置和窗口生命周期记录。']};
 async function api(path, options = {}) {
@@ -188,20 +189,39 @@ function showBackendSettings() {
 }
 $('#backend-config-button').onclick=showBackendSettings;
 $('#workspace-backend-button').onclick=showBackendSettings;
+$('#backend-dialog').addEventListener('close',()=>{
+  if(backendOperation?.phase==='checking') backendOperation.controller.abort();
+});
+$('#backend-dialog').addEventListener('cancel',event=>{
+  // Once logout starts, closing the dialog cannot undo the server-side change.
+  if(backendOperation?.phase==='saving') event.preventDefault();
+});
 $('#backend-form').onsubmit=async event=>{
-  event.preventDefault(); const button=$('#backend-save'); button.disabled=true;
+  event.preventDefault(); if(backendOperation) return;
+  const operation={controller:new AbortController(),phase:'checking'};
+  backendOperation=operation;
+  $('#backend-save').disabled=true; $('#backend-reset').disabled=true; $('#backend-address').disabled=true;
   $('#backend-error').textContent=''; $('#backend-status').textContent='正在检查服务连接…';
   try {
     const value=$('#backend-address').value;
-    const health=await checkBackend(value);
+    const health=await checkBackend(value,{signal:operation.controller.signal});
+    if(operation.controller.signal.aborted || !$('#backend-dialog').open) return;
+    operation.phase='saving'; $('#backend-dialog .dialog-close').disabled=true;
+    $('#backend-status').textContent='正在保存连接设置…';
     const changed=new URL(value.trim()).origin!==getConnection().backend;
     if(changed && user) await logout();
     await saveBackend(value);
     if(changed) showLogin();
     enableLogin(true); connectionStatus(`服务已连接 · v${health.version}`,true);
     $('#backend-dialog').close(); $('#login-error').textContent='';
-  } catch(error) { $('#backend-error').textContent=error.message; $('#backend-status').textContent='连接设置未保存'; }
-  finally { button.disabled=false; }
+  } catch(error) {
+    if(operation.controller.signal.aborted || !$('#backend-dialog').open) return;
+    $('#backend-error').textContent=error.message; $('#backend-status').textContent='连接设置未保存';
+  } finally {
+    backendOperation=undefined;
+    $('#backend-save').disabled=false; $('#backend-reset').disabled=false; $('#backend-address').disabled=false;
+    $('#backend-dialog .dialog-close').disabled=false;
+  }
 };
 $('#backend-reset').onclick=async()=>{
   try { if(user) await logout(); resetConnection(); location.reload(); }

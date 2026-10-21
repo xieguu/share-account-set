@@ -47,6 +47,8 @@ Pages 中，服务地址与登录信息仅存于当前标签页的 `sessionStora
 
 切换到另一个有效后端会先退出当前登录，关闭该登录的控制连接，再保存新地址。检查失败不会覆盖现有设置。已损坏的本页配置可在“连接设置”中点击“重置本页连接设置”；操作会清除本页保存的服务地址与登录信息。
 
+检查连接期间可以关闭设置窗口，未完成的请求会被取消，迟到的结果不会切换服务。进入退出旧登录和保存阶段后，界面暂时禁用关闭与重复提交，完成或报错后恢复。服务明确返回登录失效时，退出会清除本地登录；网络错误仍会显示失败并保留原设置，不会被当成退出成功。
+
 ## 连接协议
 
 跨域前端按以下顺序连接，后端须允许请求的 `Origin`：
@@ -56,7 +58,7 @@ Pages 中，服务地址与登录信息仅存于当前标签页的 `sessionStora
 3. 后续 API 使用 `Authorization: Bearer TOKEN`。例如 `POST /api/sessions` 的请求体为 `{"environmentId":"ENVIRONMENT_ID"}`。
 4. `POST /api/sessions/SESSION_ID/ticket`：请求体为 `{"mode":"control"}` 或 `{"mode":"view"}`；返回 `{ticket, expiresAt}`。已有操控连接时，申请新的控制票据返回 `409`。
 5. 连接 `wss://relay.example.com/ws/sessions/SESSION_ID?mode=control&ticket=TICKET`。票据绑定当前登录、前端 Origin、窗口 ID 和连接模式。
-6. 重连时申请新票据。票据使用或错误绑定尝试后失效；30 秒到期后也失效。每个登录的每个窗口最多 4 张待用票据，全服务最多 2,048 张。
+6. 重连时申请新票据。票据使用或错误绑定尝试后失效；30 秒到期后也失效。有效期由服务端按自己的时钟校验，客户端不使用本机时间提前拒绝票据。每个登录的每个窗口最多 4 张待用票据，全服务最多 2,048 张。
 7. `POST /api/logout`：撤销该登录及未使用票据，关闭该登录的 WebSocket；其他成员的连接继续运行。
 
 握手时再次验证登录、环境权限和操控权。错误 Bearer 或票据不会退回 Cookie 认证。跨站 Cookie 登录及无票据的跨站 WebSocket 均拒绝。API 禁止缓存；WebSocket URL 不含长期登录 Token。
@@ -90,6 +92,8 @@ python -m http.server 4173 --bind 127.0.0.1 --directory .pages
 手动检查时打开 `http://127.0.0.1:4173/app/`，后端 `.env` 添加 `RELAY_FRONTEND_ORIGINS=http://127.0.0.1:4173` 并重启。在设置中填写本地后端地址。`localhost` 与 `127.0.0.1` 不同，填写的来源需要与浏览器地址栏一致。HTTP 后端只允许回环地址，HTTPS 前端要求 HTTPS 后端。
 
 自动测试 [cross-origin.test.ts](../tests/cross-origin.test.ts) 验证认证、CORS 与票据；[pages-ui.test.ts](../tests/pages-ui.test.ts) 在 `localhost` 静态站与 `127.0.0.1` 后端间实际登录，覆盖项目子路径、两个成员的画面输入、Cookie 缺席、刷新、退出、移动布局及未配置/连接失败状态。源码工作台另由原有 [ui.test.ts](../tests/ui.test.ts) 验证。
+
+[connection-ui.test.ts](../tests/connection-ui.test.ts) 使用两个真实后端验证取消检查、正常切换、退出失败及登录失效；还将浏览器本机时间调快 5 分钟，检查真实画面连接和断线重连。
 
 ## 排错
 

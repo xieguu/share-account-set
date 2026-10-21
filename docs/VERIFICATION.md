@@ -2,7 +2,7 @@
 
 [返回 README](../README.md) · [English README](../README.en.md)
 
-验证日期：2026-10-19。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
+验证日期：2026-10-22。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
 
 ## 复现命令与结果
 
@@ -22,14 +22,14 @@ node --check public/viewer.js
 
 ```text
 TypeScript check                         PASS
-Browser integration + UI tests           29 passed, 0 failed
+Browser integration + UI tests           35 passed, 0 failed
 Production build                         PASS
 Pages static artifact                    PASS
 Frontend JavaScript syntax checks        PASS
-Test runner elapsed                      26.0 s
+Test runner elapsed                      29.8 s
 ```
 
-测试数为 Node.js 测试运行器报告值：原有集成及界面测试 17 项，跨域配置/票据/API 测试 11 项，Pages 端到端界面测试 1 项。包含父测试。耗时属于本轮本机运行记录，不是吞吐量或延迟基准。
+测试数为 Node.js 测试运行器报告值：原有集成及界面测试 17 项，跨域配置/票据/API 测试 11 项，Pages 端到端界面测试 1 项，连接生命周期测试 6 项。包含父测试。耗时属于本轮本机运行记录，不是吞吐量或延迟基准。
 
 测试使用真实 Chromium 和独立 HTTP 来源的本地站点，没有使用第三方账号。测试站通过真实 HTTP 响应设置 30 天 Cookie。每次运行创建独立数据库、浏览器 profile 和随机端口，不使用项目日常运行的 `data/`。
 
@@ -98,7 +98,19 @@ Test runner elapsed                      26.0 s
 
 上述跨站端到端测试使用本地 HTTP 回环服务，未连接第三方网站或公网后端。发布后的静态资源检查不等价于公网后端验收。
 
-## 修复的连接状态问题
+## 连接生命周期回归
+
+源文件：[connection-ui.test.ts](../tests/connection-ui.test.ts)。一个静态前端连接两个独立的真实后端，通过浏览器界面执行操作。
+
+| 场景 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 登录已失效时退出 | API 返回 401 后界面仍停在工作台 | 明确失效后清除本地登录，立即返回登录页并可重新登录 |
+| 检查新后端期间关闭设置 | 请求仍继续，响应到达后可能退出旧登录并切换服务 | 中止检查请求，保留原地址和有效登录 |
+| 客户端时钟快 5 分钟 | 客户端把服务端刚签发的票据误判为过期 | 由服务端校验有效期，真实画面连接及断线重连均成功 |
+
+以上三个问题先由回归用例复现，再修改实现使其通过。另验证两条已有要求：正常切换必须先撤销旧后端登录；旧后端退出请求发生网络错误时，不能保存新地址或清除原登录。
+
+## 修复的画面连接状态问题
 
 浏览器图片解码是异步操作。旧客户端只在开始接收时校验连接，导致连接断开后，尚未完成的解码仍可能绘制画面并隐藏断线提示。
 

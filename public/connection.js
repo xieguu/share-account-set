@@ -44,7 +44,10 @@ async function readJson(response, label) {
     throw new ConnectionError(`${label}返回了非 JSON 内容（HTTP ${response.status}），请核对服务地址。`, response.status, 'INVALID_RESPONSE');
   }
   try { return await response.json(); }
-  catch { throw new ConnectionError(`${label}返回的数据无法读取。`, response.status, 'INVALID_RESPONSE'); }
+  catch (error) {
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') throw error;
+    throw new ConnectionError(`${label}返回的数据无法读取。`, response.status, 'INVALID_RESPONSE');
+  }
 }
 
 export async function initConnection() {
@@ -103,16 +106,19 @@ async function request(origin, path, options = {}, authentication) {
   const headers = new Headers(options.headers);
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (authentication) headers.set('Authorization', `Bearer ${authentication}`);
-  let response;
+  let response, result;
   try {
     response = await fetch(new URL(`/api${path}`, origin), { ...options, headers, cache: 'no-store', redirect: 'error',
-      credentials: origin === location.origin ? 'same-origin' : 'omit', signal: options.signal || AbortSignal.timeout(30_000) });
+      credentials: origin === location.origin ? 'same-origin' : 'omit',
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) });
+    result = await readJson(response, '服务');
   } catch (error) {
     if (started !== revision) throw new ConnectionError('连接设置已改变，请使用当前服务重新操作。', 0, 'CONNECTION_CHANGED');
+    if (options.signal?.aborted) throw new ConnectionError('操作已取消。', 0, 'REQUEST_CANCELLED');
+    if (error instanceof ConnectionError) throw error;
     const timeout = error.name === 'TimeoutError' || error.name === 'AbortError';
     throw new ConnectionError(timeout ? '服务响应超时，请检查网络后重试。' : `无法连接服务 ${origin}。请检查网络、服务地址及服务端是否允许此工作台连接。`, 0, 'NETWORK_ERROR');
   }
-  const result = await readJson(response, '服务');
   if (started !== revision) throw new ConnectionError('连接设置已改变，请使用当前服务重新操作。', 0, 'CONNECTION_CHANGED');
   if (!response.ok) {
     if (response.status === 401 && authentication && token === authentication) clearAuthentication();
@@ -121,12 +127,12 @@ async function request(origin, path, options = {}, authentication) {
   return result;
 }
 
-export async function checkBackend(value) {
+export async function checkBackend(value, { signal } = {}) {
   await initConnection();
   const origin = validateBackend(value);
   if (!configuration.requireBackend && origin !== location.origin) throw new ConnectionError('此工作台使用当前服务；连接其他服务请使用 Pages 工作台。', 0, 'INVALID_BACKEND');
   if (configuration.requireBackend && origin === location.origin) throw new ConnectionError('请填写独立部署的 RelayHub 服务地址。', 0, 'INVALID_BACKEND');
-  const result = await request(origin, '/health');
+  const result = await request(origin, '/health', { signal });
   if (result?.status !== 'ok' || typeof result.version !== 'string') throw new ConnectionError('此地址未返回有效的 RelayHub 服务状态。', 0, 'INVALID_RESPONSE');
   return result;
 }
@@ -154,7 +160,13 @@ export async function login(credentials) {
 }
 
 export async function logout() {
-  await api('/logout', { method: 'POST' }); clearAuthentication();
+  try { await api('/logout', { method: 'POST' }); }
+  catch (error) {
+    // An explicit authentication rejection confirms that this login is already invalid.
+    // Transport failures still propagate: they cannot confirm server-side revocation.
+    if (error.status !== 401 || !['HTTP_ERROR', 'AUTH_REQUIRED'].includes(error.code)) throw error;
+  }
+  clearAuthentication();
 }
 
 export async function websocketUrl(sessionId, mode) {
@@ -164,7 +176,8 @@ export async function websocketUrl(sessionId, mode) {
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('mode', mode);
   if (getConnection().authMode === 'token') {
     const result = await api(`/sessions/${encodeURIComponent(sessionId)}/ticket`, { method: 'POST', body: JSON.stringify({ mode }) });
-    if (typeof result?.ticket !== 'string' || !result.ticket || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) {
+    // Only the issuing server can compare expiresAt with its own clock.
+    if (typeof result?.ticket !== 'string' || !result.ticket || !Number.isFinite(result.expiresAt) || result.expiresAt <= 0) {
       throw new ConnectionError('服务未返回有效的窗口连接凭据。', 0, 'INVALID_RESPONSE');
     }
     url.searchParams.set('ticket', result.ticket);

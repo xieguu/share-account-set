@@ -271,7 +271,7 @@ npm test
 npm run build
 ```
 
-2026-10-19，本地 Windows / Node.js 24.14.0 / Playwright 1.61.1 环境中的测试结果为 **29 passed，0 failed**。测试启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
+2026-10-22，本地 Windows / Node.js 24.14.0 / Playwright 1.61.1 环境中的测试结果为 **35 passed，0 failed**。测试启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
 
 - 同一登录 Cookie 与 LocalStorage 共享，停止后重启仍保留；
 - 多成员画面、输入、导航和弹窗归属；
@@ -280,6 +280,7 @@ npm run build
 - 慢导航期间的心跳、旧页面输入拒绝、断线恢复和迟到帧处理；
 - 管理表单、环境编辑、中文输入、快捷键、多行输入及移动端工作台布局。
 - Pages 子路径部署、跨站无 Cookie 登录、票据有效期/绑定/重放拒绝，以及两个成员通过独立前端共享网站登录并分别操控。
+- 过期登录退出、取消后端检查、切换服务时撤销旧登录，以及客户端时钟偏差下的连接与重连。
 
 完整范围和产物位置见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。这轮验证使用本地测试站；第三方网站兼容性、真实公网网络和长时间负载需要单独测量。
 
