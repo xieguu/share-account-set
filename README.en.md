@@ -272,11 +272,13 @@ npm test
 npm run build
 ```
 
-The 2026-10-22 local Windows run with Node.js 24.14.0 and Playwright 1.61.1 reported **35 passed, 0 failed**. Tests use real Chromium, separate-origin websites, and real WebSocket connections, including a static Pages workspace served on a different site from the backend.
+The 2026-10-22 local Windows run with Node.js 24.14.0 and Playwright 1.61.1 reported **42 passed, 0 failed**. Tests use real Chromium, separate-origin websites, and real WebSocket connections, including a static Pages workspace served on a different site from the backend.
 
 Coverage includes shared login and persistent storage; independent input, navigation, frames, and popups; ownership and access checks; control revocation; logout; cleanup; frame suppression and acknowledgment; visibility and quality settings; heartbeats during slow navigation; stale-input rejection; reconnection; late decoded frames; management forms; Chinese IME; shortcuts; multiline input; and mobile layout. Pages tests also cover exact CORS origins, cookie-free cross-site login, ticket binding/expiry/replay rejection, two-member remote input, reload, logout, and explicit missing-backend or connection-failure states.
 
 Connection lifecycle tests also cover exiting an expired login, cancelling a pending backend check, revoking the old login before switching services, retaining the current configuration when logout fails, and connecting/reconnecting with a client clock five minutes ahead.
+
+Workspace polling waits seven seconds after each read settles. Hidden pages pause polling and refresh immediately when visible; navigation cancels obsolete reads. Regression tests cover slow responses, recovery after the first read fails, audit failures, visibility changes, and revoked logins. A failed snapshot keeps the last completed data visible and marks the connection for checking.
 
 See [docs/VERIFICATION.md](docs/VERIFICATION.md) for scope and artifact locations. Third-party website compatibility, public-network behavior, and sustained capacity require separate measurements.
 

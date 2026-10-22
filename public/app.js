@@ -2,54 +2,76 @@ import { api as request, login, logout, initConnection, getConnection, checkBack
 
 const $ = selector => document.querySelector(selector);
 let user, environments = [], sessions = [], members = [], view = 'environments';
-let refreshTimer, toastTimer, workspaceRevision = 0, refreshSequence = 0;
+let refreshTimer, toastTimer, refreshOperation;
 let backendOperation;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const titles = {environments:['账号环境','选择一个账号环境，打开属于你的远程窗口。'],sessions:['运行窗口','查看实时连接、继续操作，或释放闲置窗口。'],members:['成员管理','为成员分配账号环境和访问权限。'],audit:['操作记录','查看登录、环境配置和窗口生命周期记录。']};
 async function api(path, options = {}) {
   try { return await request(path, options); }
   catch (error) {
-    if (error.status === 401 && user) showLogin();
+    if (error.status === 401 && user && !options.signal?.aborted) {
+      showLogin(); $('#login-error').textContent=error.message;
+    }
     throw error;
   }
 }
 function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,5000); }
 function showLogin() {
-  workspaceRevision++; user=undefined; environments=[]; sessions=[]; members=[];
-  clearInterval(refreshTimer); $('#workspace').hidden=true; $('#login-screen').hidden=false;
+  cancelRefresh(); user=undefined; environments=[]; sessions=[]; members=[];
+  $('#workspace').hidden=true; $('#login-screen').hidden=false;
   document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
   for (const key of Object.keys(titles)) $(`#${key}-view`).replaceChildren();
 }
 async function showWorkspace(current) {
-  const started=++workspaceRevision;
+  cancelRefresh();
   user=current; $('#login-screen').hidden=true; $('#workspace').hidden=false;
   $('#username').textContent=user.username; $('#avatar').textContent=user.username[0].toUpperCase(); $('#role').textContent=user.role==='admin'?'工作空间管理员':'普通成员';
   document.querySelectorAll('.admin-only').forEach(el=>el.hidden=user.role!=='admin');
-  await setView('environments');
-  if(started!==workspaceRevision) return;
-  clearInterval(refreshTimer); refreshTimer=setInterval(()=>refresh().catch(error=>toast(error.message)),7000);
+  try { await setView('environments'); }
+  catch(error) { toast(error.message); }
+}
+function refreshBusy(busy) {
+  $('#refresh').disabled=busy;
+  $('#refresh').setAttribute('aria-busy',String(busy));
+  $('#refresh').textContent=busy?'刷新中…':'↻ 刷新';
+}
+function cancelRefresh() {
+  clearTimeout(refreshTimer);
+  refreshOperation?.controller.abort(); refreshOperation=undefined;
+  refreshBusy(false);
 }
 async function refresh() {
-  if (!user) return;
-  const started=workspaceRevision, sequence=++refreshSequence, currentView=view;
-  let result;
+  cancelRefresh();
+  if (!user || document.hidden) return;
+  const operation={controller:new AbortController(),view};
+  refreshOperation=operation; refreshBusy(true);
+  const options={signal:operation.controller.signal};
   try {
-    result=await Promise.all([api('/environments'),api('/sessions'),
-      user.role==='admin' && currentView==='members'?api('/admin/users'):null]);
+    const result=await Promise.all([api('/environments',options),api('/sessions',options),
+      user.role==='admin' && operation.view==='members'?api('/admin/users',options):null,
+      operation.view==='audit'?api('/admin/audit',options):null]);
+    if(refreshOperation!==operation || operation.controller.signal.aborted) return;
+    environments=result[0].environments; sessions=result[1].sessions;
+    if(result[2]) members=result[2].users;
+    connectionStatus('服务已连接', true);
+    $('#stat-environments').textContent=environments.length; $('#environment-count').textContent=environments.length;
+    $('#stat-sessions').textContent=sessions.length; $('#session-count').textContent=sessions.length;
+    $('#stat-connections').textContent=sessions.reduce((sum,s)=>sum+s.clients,0);
+    renderEnvironments(); renderSessions();
+    if(operation.view==='members') renderMembers();
+    if(result[3]) renderAudit(result[3].entries);
   } catch(error) {
-    if(started===workspaceRevision) connectionStatus(error.message, false);
+    if(refreshOperation!==operation || operation.controller.signal.aborted) return;
+    operation.controller.abort();
+    connectionStatus(error.message, false);
     throw error;
+  } finally {
+    if(refreshOperation===operation) {
+      refreshOperation=undefined; refreshBusy(false);
+      // Wait after settlement: slow responses cannot accumulate interval callbacks.
+      if(user && !document.hidden) refreshTimer=setTimeout(()=>void refresh().catch(error=>toast(error.message)),7000);
+    }
   }
-  if(started!==workspaceRevision || sequence!==refreshSequence || currentView!==view) return;
-  environments=result[0].environments; sessions=result[1].sessions;
-  if(result[2]) members=result[2].users;
-  connectionStatus('服务已连接', true);
-  $('#stat-environments').textContent=environments.length; $('#environment-count').textContent=environments.length;
-  $('#stat-sessions').textContent=sessions.length; $('#session-count').textContent=sessions.length;
-  $('#stat-connections').textContent=sessions.reduce((sum,s)=>sum+s.clients,0);
-  renderEnvironments(); renderSessions();
-  if(view==='members') renderMembers();
-  if(view==='audit') await renderAudit();
 }
 function renderEnvironments() {
   const query=$('#search').value.trim().toLowerCase();
@@ -66,10 +88,7 @@ function renderSessions() {
 function renderMembers() {
   $('#members-view').innerHTML=table(['成员','角色','账号环境','状态','操作'],members.map(m=>`<tr><td>${esc(m.username)}</td><td>${m.role==='admin'?'管理员':'普通成员'}</td><td>${m.role==='admin'?'全部环境':m.environmentIds.length+' 个环境'}</td><td>${m.enabled?'正常':'已停用'}</td><td>${m.enabled&&m.role!=='admin'?`<button class="secondary" data-action="grants" data-id="${m.id}">分配环境</button>`:''}${m.enabled&&m.id!==user.id?`<button class="danger" data-action="disable" data-id="${m.id}">停用</button>`:''}</td></tr>`));
 }
-async function renderAudit() {
-  const started=workspaceRevision;
-  const {entries}=await api('/admin/audit');
-  if(started!==workspaceRevision || view!=='audit') return;
+function renderAudit(entries) {
   const labels={'login':'成员登录','session.create':'创建窗口','session.close':'释放窗口','environment.create':'创建环境','environment.update':'编辑环境','environment.stop':'停止环境','environment.delete':'删除环境','user.create':'创建成员','user.disable':'停用成员','grant.add':'分配环境','grant.revoke':'撤销环境权限','control.revoke':'收回操控权'};
   $('#audit-view').innerHTML=entries.length?table(['时间（UTC）','操作','操作者 ID','对象 ID'],entries.map(e=>`<tr><td>${esc(e.at)}</td><td>${esc(labels[e.action]||e.action)}</td><td>${esc(e.userId?.slice(0,8))}</td><td>${esc(e.objectId?.slice(0,32))}</td></tr>`)):'<div class="empty">尚无记录</div>';
 }
@@ -137,6 +156,14 @@ $('#login-form').onsubmit=async event=>{
 };
 $('#logout').onclick=async()=>{try{await logout();showLogin();}catch(error){toast(error.message);}};
 $('#refresh').onclick=()=>refresh().catch(error=>toast(error.message));
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden) cancelRefresh();
+  else if(user) void refresh().catch(error=>toast(error.message));
+});
+window.addEventListener('pagehide',cancelRefresh);
+window.addEventListener('pageshow',event=>{
+  if(event.persisted && user) void refresh().catch(error=>toast(error.message));
+});
 $('#search').oninput=renderEnvironments;
 function showEnvironment(id) {
   const form=$('#environment-form'), env=environments.find(item=>item.id===id);
