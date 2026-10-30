@@ -13,6 +13,8 @@ const schema = z.object({
   port: z.coerce.number().int().min(1).max(65535).default(3410),
   origin: originSchema.default('http://127.0.0.1:3410'),
   frontendOrigins: z.array(originSchema).max(20).optional(),
+  trustedNetworkOrigins: z.array(originSchema).max(50).optional(),
+  agentInsecureLoopback: z.boolean().optional(),
   dataDir: z.string().default('./data'),
   adminUser: z.string().min(2).default('admin'),
   adminPassword: z.string().min(12),
@@ -33,6 +35,8 @@ export function loadConfig(): Config {
     frontendOrigins: process.env.RELAY_FRONTEND_ORIGINS === undefined ? undefined
       : process.env.RELAY_FRONTEND_ORIGINS.trim() === '' ? []
       : process.env.RELAY_FRONTEND_ORIGINS.split(',').map(value => value.trim()),
+    trustedNetworkOrigins: process.env.RELAY_TRUSTED_NETWORK_ORIGINS?.split(',').map(value => value.trim()).filter(Boolean),
+    agentInsecureLoopback: process.env.RELAY_AGENT_INSECURE_LOOPBACK === 'true',
     dataDir: resolve(process.env.RELAY_DATA_DIR || './data'),
     adminUser: process.env.RELAY_ADMIN_USER,
     adminPassword: process.env.RELAY_ADMIN_PASSWORD,

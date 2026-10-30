@@ -9,7 +9,7 @@
 <div id="workspace" class="workspace" hidden>
   <aside class="sidebar"><a class="brand" href="./">◈ <span>RelayHub</span></a><div class="workspace-label">WORKSPACE</div><nav><button class="nav active" data-view="environments">▦ <span>账号环境</span></button><button class="nav" data-view="sessions">▣ <span>运行窗口</span><b id="session-count">0</b></button><button class="nav admin-only" data-view="members">♧ <span>成员管理</span></button><button class="nav admin-only" data-view="audit">☷ <span>操作记录</span></button></nav><div class="sidebar-bottom"><div id="workspace-service-status" class="status"><i></i><span>尚未连接服务</span></div><p>共享登录 · 独立页面</p><div class="identity"><div class="avatar" id="avatar">R</div><div><strong id="username"></strong><small id="role"></small></div><button id="logout" class="icon-button" title="退出登录">↪</button></div></div></aside>
   <main class="content"><header class="topbar"><span>工作空间 <i>/</i> <b id="breadcrumb">账号环境</b></span><div><button id="workspace-backend-button" class="secondary" title="当前服务 / 切换服务">连接设置</button><button id="refresh" class="secondary">↻ 刷新</button></div></header>
-    <section class="page-header"><div><span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1 id="view-title">账号环境</h1><p id="view-description">选择一个账号环境，打开属于你的远程窗口。</p></div><button id="add-environment" class="primary admin-only">＋ 添加环境</button><button id="add-member" class="primary" hidden>＋ 添加成员</button></section>
+    <section class="page-header"><div><span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1 id="view-title">账号环境</h1><p id="view-description">选择一个账号环境，打开属于你的远程窗口。</p></div><button id="add-environment" class="primary">＋ 添加环境</button><button id="add-member" class="primary" hidden>＋ 添加成员</button></section>
     <section class="stats"><div><span>可用账号环境</span><strong id="stat-environments">0</strong><small>持久化浏览器配置</small></div><div><span>运行中的窗口</span><strong id="stat-sessions">0</strong><small>各自独立的页面操作</small></div><div><span>实时连接</span><strong id="stat-connections">0</strong><small>正在观看或操控</small></div><div class="stats-note"><span class="status"><i></i> 共享会话模式</span><p>同一环境共用登录状态，<br>每位成员分配独立页面。</p></div></section>
     <div id="environment-tools" class="section-tools"><h2>全部环境 <span id="environment-count">0</span></h2><input id="search" type="search" placeholder="⌕  搜索名称或网址" aria-label="搜索账号环境"></div>
     <section id="environments-view" class="environment-grid"></section>
@@ -27,7 +27,25 @@
     <button id="backend-reset" class="secondary full" type="button">重置本页连接设置</button>
   </form>
 </dialog>
-<dialog id="environment-dialog"><form id="environment-form"><div class="dialog-title"><div><span class="eyebrow">ACCOUNT ENVIRONMENT</span><h2>添加账号环境</h2></div><button type="button" class="dialog-close icon-button">×</button></div><label>环境名称<input name="name" placeholder="例如：团队知识库" required maxlength="80"></label><label>起始网址<input name="startUrl" type="url" placeholder="https://example.com" required></label><label>允许访问的来源<textarea name="allowedOrigins" rows="4" placeholder="https://example.com&#10;https://login.example.com" required></textarea><small>每行填写一个完整来源（协议 + 域名 + 可选端口）。登录跳转、CDN 和接口来源也需加入。</small></label><label>并发窗口上限<input name="maxSessions" type="number" min="1" max="30" value="8" required></label><p class="form-error error" role="alert"></p><button class="primary full" type="submit">创建环境</button></form></dialog>
+<dialog id="environment-dialog"><form id="environment-form">
+  <div class="dialog-title"><div><span class="eyebrow">ACCOUNT ENVIRONMENT</span><h2>添加账号环境</h2></div><button type="button" class="dialog-close icon-button">×</button></div>
+  <p class="muted">环境默认私有。创建后自行登录网站，再选择共享成员。</p>
+  <label>创建方式<select name="mode"><option value="server">服务器浏览器</option><option value="local">连接本地 Local Agent</option><option value="import">导入 Playwright 会话到服务器</option></select></label>
+  <p id="local-agent-help" class="muted" hidden>浏览器在你的设备上运行。创建后下载设备配置，按<a href="https://github.com/xieguu/share-account-set/blob/page/docs/LOCAL_AGENT.md" target="_blank" rel="noreferrer">安装说明</a>启动 Agent。设备离线时不可使用，登录资料保留在设备上。</p>
+  <label>环境名称<input name="name" placeholder="例如：团队知识库" required maxlength="80"></label>
+  <label>起始网址<input name="startUrl" type="url" placeholder="https://example.com" required></label>
+  <label>允许访问的来源<textarea name="allowedOrigins" rows="4" placeholder="https://example.com&#10;https://login.example.com" required></textarea><small>每行填写一个完整来源（协议 + 域名 + 可选端口）。登录跳转、CDN 和接口来源也需加入；内网服务需要部署者额外授权。</small></label>
+  <label>并发窗口上限<input name="maxSessions" type="number" min="1" max="30" value="8" required></label>
+  <div id="import-fields" hidden>
+    <label>Playwright storageState JSON<input id="storage-file" type="file" accept=".json,application/json"></label>
+    <p id="storage-preview" class="muted" role="status"></p>
+    <p class="muted">支持 Cookie、LocalStorage 和受支持的 IndexedDB。只上传 JSON，不上传浏览器目录或脚本；网站的设备绑定等机制可能使登录迁移失败。</p>
+    <label class="checkline"><input id="import-confirm" type="checkbox">我确认这些登录信息将保存到服务器的新私有环境，站点管理员可管理该环境；以后获得授权的成员将共用网站身份及账号内数据。</label>
+  </div>
+  <p class="form-error error" role="alert"></p><button class="primary full" type="submit">创建环境</button>
+</form></dialog>
+<dialog id="environment-grants-dialog"><div class="dialog-title"><h2>共享成员</h2><button type="button" class="dialog-close icon-button">×</button></div><p class="muted">勾选后立即授权。成员共用该网站登录身份及账号内的数据，但分别操作自己的页面。取消勾选会关闭该成员的窗口。所有者和站点管理员始终可以管理环境。</p><div id="environment-grants-list" class="checklist"></div><p class="form-error error" role="alert"></p></dialog>
+<dialog id="environment-audit-dialog"><div class="dialog-title"><h2>环境操作记录</h2><button type="button" class="dialog-close icon-button">×</button></div><div id="environment-audit-list"></div></dialog>
 <dialog id="member-dialog"><form id="member-form"><div class="dialog-title"><div><span class="eyebrow">WORKSPACE MEMBER</span><h2>添加成员</h2></div><button type="button" class="dialog-close icon-button">×</button></div><label>用户名<input name="username" pattern="[a-zA-Z0-9_-]{2,40}" placeholder="2–40 位字母、数字、下划线" required></label><label>初始密码<input name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required placeholder="至少 12 位"></label><label>角色<select name="role"><option value="member">普通成员</option><option value="admin">管理员</option></select></label><label>可访问的环境</label><div id="member-environments" class="checklist"></div><p class="form-error error" role="alert"></p><button class="primary full" type="submit">创建成员</button></form></dialog>
 <dialog id="grants-dialog"><div class="dialog-title"><h2>分配环境</h2><button type="button" class="dialog-close icon-button">×</button></div><div id="grant-list" class="checklist"></div><p class="form-error error" role="alert"></p></dialog>
 <div id="toast" class="toast" role="status" hidden></div>

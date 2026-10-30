@@ -22,7 +22,7 @@
 
 The `page` branch includes a Pages workspace that connects to your own backend. The site root introduces the project; `/app/` is the functional workspace. See [Pages operations](docs/PAGES.md) for configuration and deployment.
 
-**RelayHub is a self-hosted workspace for multi-user remote browsing.** An administrator signs in to a website in a server-side browser and grants members access to that account environment. Each member opens their own remote page in RelayHub, using the original website interface.
+**RelayHub is a self-hosted workspace for multi-user remote browsing.** Members create private browser environments, sign in on the original website, and explicitly grant access to other members. Chromium can run on the server or on a member's own computer. Each member controls a separate page sharing that environment's website identity.
 
 Pages in the same environment share website login state. Navigation, mouse and keyboard input, and screen streams are routed separately for each member. Administrators can observe sessions, take control, and release resources.
 
@@ -79,7 +79,24 @@ RELAY_FRONTEND_ORIGINS=https://xieguu.github.io
 
 Restart the backend, open the [online workspace](https://xieguu.github.io/share-account-set/app/), and choose **设置服务** (set service). Enter `https://relay.example.com`; after the connection check, sign in with a RelayHub account from that backend and open your remote window.
 
-Pages serves the frontend. API and WebSocket requests go to your backend, where SQLite stores members and configuration and Chromium profiles retain website login state. No default public backend is provided. Missing configuration and failed connections are shown explicitly. See [docs/PAGES.md](docs/PAGES.md) for deployment, authentication, and troubleshooting.
+Pages serves the frontend. API and WebSocket requests go to your backend, where SQLite stores members and configuration. Server profiles stay on the server; Local Agent profiles stay on the member's device. No default public backend is provided. See [docs/PAGES.md](docs/PAGES.md) for deployment, authentication, and troubleshooting.
+
+### Member-owned sharing
+
+Choose **添加环境** (add environment): create a server browser, pair a Local Agent, or import a Playwright storageState JSON into a new private server environment. Owners select shared members, pause sharing, disconnect users and inspect environment audit entries. Administrators retain global management access.
+
+The standalone Local Agent requires Node.js 24+, Chromium, and a device configuration downloaded by the environment owner:
+
+```powershell
+npm ci
+npx playwright install chromium
+npm run build
+npm run agent -- --config "$env:USERPROFILE\Downloads\relayhub-agent-ENV_ID.json"
+```
+
+Replace `ENV_ID` with the downloaded filename. The Agent initiates a certificate-verified WSS connection; no public inbound port or CDP endpoint is exposed. Device profiles never migrate to the server on disconnect. Private network origins require an operator allowlist; members cannot override it through environment URLs.
+
+Guides: [ownership and API](docs/MEMBER_SHARING.md), [Windows Agent setup](docs/LOCAL_AGENT.md), [storageState import and scope confirmation](docs/STORAGE_IMPORT.md). macOS/Linux use the same portable code and documented commands; this release's runtime verification was on Windows.
 
 <a id="preview"></a>
 ## Preview
@@ -99,6 +116,9 @@ These screenshots come from real browser UI tests. The remote content is the bui
 | Capability | Implementation |
 | --- | --- |
 | Account environments | Name, start URL, allowed origins, and concurrency limits; browsers start on demand |
+| Member ownership | Private by default; explicit owner grants, pause/revoke controls, administrator management |
+| Local Agent | Outbound WSS, dedicated device profile, separate member pages sharing one website identity |
+| Session import | Validated JSON containing cookies, LocalStorage and supported IndexedDB; explicit consent and a new private profile |
 | Persistent shared login | One dedicated browser profile per environment, reused across its member pages |
 | Separate member sessions | One window per member per environment, with up to five related tabs |
 | Remote interaction | Mouse, wheel, keyboard, Chinese IME, text paste, back, forward, and reload |
@@ -272,7 +292,7 @@ npm test
 npm run build
 ```
 
-The 2026-10-22 local Windows run with Node.js 24.14.0 and Playwright 1.61.1 reported **42 passed, 0 failed**. Tests use real Chromium, separate-origin websites, and real WebSocket connections, including a static Pages workspace served on a different site from the backend.
+Tests run on Windows with Node.js 24.14.0 and Playwright 1.61.1, using real Chromium, separate-origin websites, and real WebSocket connections. The current results are recorded in [verification](docs/VERIFICATION.md), including member ownership, private access, network policy, storage import and a standalone Agent process over certificate-verified WSS.
 
 Coverage includes shared login and persistent storage; independent input, navigation, frames, and popups; ownership and access checks; control revocation; logout; cleanup; frame suppression and acknowledgment; visibility and quality settings; heartbeats during slow navigation; stale-input rejection; reconnection; late decoded frames; management forms; Chinese IME; shortcuts; multiline input; and mobile layout. Pages tests also cover exact CORS origins, cookie-free cross-site login, ticket binding/expiry/replay rejection, two-member remote input, reload, logout, and explicit missing-backend or connection-failure states.
 

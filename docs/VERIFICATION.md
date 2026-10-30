@@ -2,7 +2,7 @@
 
 [返回 README](../README.md) · [English README](../README.en.md)
 
-验证日期：2026-10-22。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
+验证日期：2026-10-30。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
 
 ## 复现命令与结果
 
@@ -22,14 +22,23 @@ node --check public/viewer.js
 
 ```text
 TypeScript check                         PASS
-Browser integration + UI tests           42 passed, 0 failed
+Browser integration + UI tests           50 passed, 0 failed
 Production build                         PASS
 Pages static artifact                    PASS
 Frontend JavaScript syntax checks        PASS
-Test runner elapsed                      33.4 s
 ```
 
-测试数为 Node.js 测试运行器报告值：原有集成及界面测试 17 项，跨域配置/票据/API 测试 11 项，Pages 端到端界面测试 1 项，连接生命周期测试 6 项，工作台刷新测试 7 项。包含父测试。耗时属于本轮本机运行记录，不是吞吐量或延迟基准。
+测试数包含父测试：原有 42 项，加上成员环境及导入 2 项、Local Agent 2 项、网络策略 2 项、成员界面 1 项、数据库迁移 1 项。
+
+## 成员共享新增验证
+
+- `member-environments.test.ts`：成员创建默认私有环境、伪造所有者无效、授权/撤销/暂停、所有者管理窗口、管理员停用所有者，以及真实 Cookie、LocalStorage、IndexedDB（含 Date）导入与两窗口读取；拒绝非法格式、跨来源和超限请求，恢复失败清理新环境。
+- `local-agent.test.ts`：启动独立 Agent CLI 子进程，通过信任测试 CA 的 WSS 连接真实 HTTPS 后端和 Chromium，验证双成员独立输入、JPEG、共享登录、观察模式、撤权、暂停、设备断线/重连、本地持久化、设备密钥撤销；服务器没有生成该设备的 Profile。
+- `network-policy.test.ts`：私网、回环、编码 IP、IPv6 映射、混合 DNS、DNS 重绑定拒绝；经部署者授权的精确内网来源可通过 HTTP 和 CONNECT，连接使用校验后的固定地址。
+- `member-ui.test.ts`：普通成员实际填写创建表单、授权与暂停、导入确认、设备配置下载；390px 无横向溢出且无未捕获 JS 异常。截图在 `test-results/member-*.png`。
+- `ownership-migration.test.ts`：原有 SQLite 数据库升级、管理员归属、环境 ID、密码及授权保持不变，重复启动迁移幂等。
+
+本轮设备进程测试使用 Windows 和无头 Chromium；macOS/Linux、真实第三方登录迁移及公网长时负载未做运行验收。
 
 测试使用真实 Chromium 和独立 HTTP 来源的本地站点，没有使用第三方账号。测试站通过真实 HTTP 响应设置 30 天 Cookie。每次运行创建独立数据库、浏览器 profile 和随机端口，不使用项目日常运行的 `data/`。
 

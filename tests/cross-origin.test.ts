@@ -61,6 +61,7 @@ test('cross-origin API and one-use WebSocket tickets with real Chromium', { time
     adminUser: 'admin', adminPassword: 'cross-origin-password-123', headless: true,
     idleMs: 60_000, maxContexts: 2, lab: false, labPort: 3411,
   };
+  config.trustedNetworkOrigins = [labOrigin];
   const runtime = createApp(config);
   const server = serve({ fetch: runtime.app.fetch, hostname: '127.0.0.1', port: 0 }) as Server;
   runtime.attach(server);

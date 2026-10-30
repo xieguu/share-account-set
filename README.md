@@ -22,7 +22,7 @@
 
 此为 `page` 分支，包含可连接独立后端的 Pages 工作台。根目录是项目介绍，`/app/` 是实际操作入口；部署方式见 [Pages 运维说明](docs/PAGES.md)。
 
-**RelayHub 是一个可自托管的多用户远程浏览器工作台。** 管理员在服务器浏览器中登录网站，为成员分配账号环境；成员打开 RelayHub，就能在网页里操作各自的远程页面，保留原网站的界面与交互。
+**RelayHub 是一个可自托管的多用户远程浏览器工作台。** 成员可以创建自己的私有浏览器环境，在网站页面中自行登录，再授权其他成员使用。浏览器可以运行在服务器或成员的本地电脑；每人操作独立页面，保留原网站界面。
 
 同一账号环境中的页面共享登录状态，导航、键盘、鼠标与画面通道分别管理。你可以在一个页面搜索，另一名成员同时在自己的页面填写表单，管理员统一查看和回收窗口。
 
@@ -79,7 +79,30 @@ RELAY_FRONTEND_ORIGINS=https://xieguu.github.io
 
 重启后端后，打开 [在线工作台](https://xieguu.github.io/share-account-set/app/)，点击“设置服务”，填写 `https://relay.example.com`。连接检查通过后，用该后端的 RelayHub 成员账号登录，即可管理环境、打开和操控自己的窗口。
 
-Pages 提供前端，API 和 WebSocket 连接上述后端。成员与配置写入后端 SQLite，网站登录状态保存在后端 Chromium profile。未配置服务时会明确显示未连接；当前仓库不提供默认公共后端。详细部署、登录机制与排错见 [docs/PAGES.md](docs/PAGES.md)。
+Pages 提供前端，API 和 WebSocket 连接上述后端。成员与配置写入后端 SQLite；服务器环境的登录状态保存在后端 Profile，本地环境保存在成员设备。未配置服务时会明确显示未连接；当前仓库不提供默认公共后端。详细部署、登录机制与排错见 [docs/PAGES.md](docs/PAGES.md)。
+
+### 成员自主共享
+
+点击 **添加环境**，选择一种方式：
+
+| 方式 | 浏览器与登录资料在哪里 | 操作说明 |
+| --- | --- | --- |
+| 服务器浏览器 | RelayHub 服务器的独立持久化 Profile | [创建、登录、授权与暂停](docs/MEMBER_SHARING.md) |
+| 本地 Local Agent | 成员自己的电脑，通过 WSS 主动连接 | [Windows 安装与设备配对](docs/LOCAL_AGENT.md) |
+| 导入 Playwright 会话 | 校验 JSON 后创建新的私有服务器环境 | [格式、确认范围与迁移步骤](docs/STORAGE_IMPORT.md) |
+
+新环境默认私有，所有者从“共享成员”明确授权；所有者和管理员可以收回控制、踢出使用者、暂停和查看操作记录。本地设备离线时显示离线，登录资料不会自动迁移到服务器。
+
+Local Agent 使用同一仓库的独立进程。下载设备配置后，在 Windows PowerShell 中运行：
+
+```powershell
+npm ci
+npx playwright install chromium
+npm run build
+npm run agent -- --config "$env:USERPROFILE\Downloads\relayhub-agent-ENV_ID.json"
+```
+
+将 `ENV_ID` 换成下载文件名。正式连接要求 HTTPS/WSS；设备无需开放入站端口。完整步骤及本机回环开发模式见 [Local Agent 文档](docs/LOCAL_AGENT.md)。
 
 <a id="preview"></a>
 ## 界面预览
@@ -99,6 +122,9 @@ Pages 提供前端，API 和 WebSocket 连接上述后端。成员与配置写�
 | 能力 | 当前实现 |
 | --- | --- |
 | 多账号环境 | 分别配置名称、起始地址、允许来源和并发上限；按需启动 Chromium |
+| 成员所有权 | 普通成员自主创建，默认私有，所有者授权其他成员；管理员管理全站 |
+| 本地浏览器 | 独立 Local Agent、WSS 主动连接、共享本地持久化身份、分别操作 Page |
+| 会话导入 | 受限 storageState JSON，包含 Cookie、LocalStorage 和受支持的 IndexedDB；导入前确认共享范围 |
 | 共享持久化登录 | 同一环境的页面共用浏览器配置目录；正常关闭后保留网站存储 |
 | 成员独立操作 | 每名成员在每个环境最多拥有一个窗口；每个窗口最多 5 个关联标签页 |
 | 原始网页交互 | 鼠标、滚轮、键盘、中文输入法、粘贴文本、前进、后退和刷新 |
@@ -191,6 +217,8 @@ https://api.example.com
 | `RELAY_PORT` | `3410` |
 | `RELAY_ORIGIN` | `http://127.0.0.1:3410`；后端对外来源，也是同域门户入口 |
 | `RELAY_FRONTEND_ORIGINS` | 默认空；允许访问后端的独立前端来源，以逗号分隔，不含路径、尾斜杠或通配符 |
+| `RELAY_TRUSTED_NETWORK_ORIGINS` | 默认空；仅部署者可授权精确的内网来源；用户允许来源不能替代这一设置 |
+| `RELAY_AGENT_INSECURE_LOOPBACK` | `false`；仅本机开发时允许数字回环 HTTP，正式设备连接使用 WSS |
 | `RELAY_DATA_DIR` | `./data`，保存数据库和浏览器配置 |
 | `RELAY_ADMIN_USER` | `admin`，用于首次初始化 |
 | `RELAY_ADMIN_PASSWORD` | setup 随机生成，至少 12 字符，用于首次初始化 |
@@ -272,7 +300,7 @@ npm test
 npm run build
 ```
 
-2026-10-22，本地 Windows / Node.js 24.14.0 / Playwright 1.61.1 环境中的测试结果为 **42 passed，0 failed**。测试启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
+测试使用本地 Windows / Node.js 24.14.0 / Playwright 1.61.1，启动真实 Chromium、独立来源的测试站和真实 WebSocket，覆盖：
 
 - 同一登录 Cookie 与 LocalStorage 共享，停止后重启仍保留；
 - 多成员画面、输入、导航和弹窗归属；
@@ -281,6 +309,9 @@ npm run build
 - 慢导航期间的心跳、旧页面输入拒绝、断线恢复和迟到帧处理；
 - 管理表单、环境编辑、中文输入、快捷键、多行输入及移动端工作台布局。
 - Pages 子路径部署、跨站无 Cookie 登录、票据有效期/绑定/重放拒绝，以及两个成员通过独立前端共享网站登录并分别操控。
+- 成员默认私有、所有权与授权、暂停/撤权、旧数据库迁移、DNS 重绑定和内网目标拒绝；
+- 独立 Agent CLI 通过校验证书的 WSS 共享本机身份、分路输入、离线与重连；
+- Cookie / LocalStorage / IndexedDB 导入、共享确认、非法格式拒绝及失败清理。
 - 过期登录退出、取消后端检查、切换服务时撤销旧登录，以及客户端时钟偏差下的连接与重连。
 - 慢请求不叠加轮询、首次读取失败后恢复、切页取消旧请求、审计失败状态、后台暂停和登录撤销后停止刷新。
 
@@ -308,6 +339,9 @@ npm run build
 - [x] 流控、画质选择、后台暂停与连接恢复
 - [x] 环境编辑、闲置回收与自动化验证
 - [x] Pages 连接独立后端、跨域认证与一次性窗口票据
+- [x] 成员私有环境、所有者授权、暂停共享与环境审计
+- [x] Windows Local Agent、WSS 设备连接与独立页面路由
+- [x] 经过范围校验的 Playwright 会话导入
 - [ ] Docker / Ubuntu / 公网 HTTPS 部署验收
 - [ ] 针对实际网站的兼容性和并发容量测试
 - [ ] 文件通道、网页对话框与更完整的剪贴板交互
@@ -327,6 +361,8 @@ npm run build
 | [src/browser.ts](src/browser.ts) | 账号环境、窗口、标签页、输入排序与回收 |
 | [src/frame-stream.ts](src/frame-stream.ts) | 捕获、去重、逐连接确认与背压 |
 | [src/store.ts](src/store.ts) | SQLite、成员、授权、登录会话与审计 |
+| [src/local-agent.ts](src/local-agent.ts)、[src/agent-hub.ts](src/agent-hub.ts) | 本地设备连接与窗口流中转 |
+| [src/network-policy.ts](src/network-policy.ts)、[src/storage-state.ts](src/storage-state.ts) | 网络目标策略与会话导入校验 |
 | [src/protocol.ts](src/protocol.ts) | 控制消息校验与来源匹配 |
 | [public/](public/) | 管理工作台与远程窗口客户端 |
 | [src/lab.ts](src/lab.ts) | 独立来源的共享登录验证站 |

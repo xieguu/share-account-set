@@ -1,23 +1,26 @@
 import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import { WebSocket } from 'ws';
+import type { Peer } from './peer.js';
 import type { Config } from './config.js';
 import type { Environment, User } from './store.js';
 import { AppError, allowedUrl, type Command } from './protocol.js';
 import { dispatchCdpKeyEvent, dispatchCdpMouseEvent } from './vendor/remotebrowser/cdp.js';
 import { FrameStream } from './frame-stream.js';
+import { NetworkPolicy } from './network-policy.js';
+import type { StorageState } from './storage-state.js';
 
 type Tab = { id: string; page: Page; cdp: CDPSession };
 type Runtime = { context: BrowserContext; lastUsed: number };
 export class RemoteSession {
-  readonly id = randomUUID();
+  readonly id: string;
   readonly createdAt = Date.now();
   lastUsed = Date.now();
   readonly tabs = new Map<string, Tab>();
-  readonly sockets = new Set<WebSocket>();
-  controller?: WebSocket;
+  readonly sockets = new Set<Peer>();
+  controller?: Peer;
   activeTabId?: string;
   private closed = false;
   private releasingControl = false;
@@ -28,7 +31,7 @@ export class RemoteSession {
   private pendingTabs = 0;
   onClosed?: () => void;
 
-  constructor(readonly env: Environment, readonly user: User, private context: BrowserContext) {}
+  constructor(readonly env: Environment, readonly user: User, private context: BrowserContext, id: string = randomUUID()) { this.id = id; }
 
   async initialize() {
     const tab = await this.createTab();
@@ -109,7 +112,7 @@ export class RemoteSession {
     console.error(`[browser:${this.id}] ${message}`);
     this.broadcast({ type: 'error', message });
   }
-  attach(ws: WebSocket, control: boolean) {
+  attach(ws: Peer, control: boolean) {
     if (this.closed) throw new AppError(410, '窗口已关闭');
     if (control && (this.controller || this.releasingControl)) throw new AppError(409, '此窗口已有操控连接，请先关闭原连接');
     if (control) this.controller = ws;
@@ -119,7 +122,7 @@ export class RemoteSession {
     this.stream.add(ws);
     this.publish();
   }
-  async detach(ws: WebSocket) {
+  async detach(ws: Peer) {
     if (this.controller === ws) {
       // Do not accept a new controller until all pressed keys/buttons are released.
       this.controller = undefined;
@@ -158,7 +161,7 @@ export class RemoteSession {
     this.heldKeys.clear();
     this.heldMouse = undefined;
   }
-  async command(ws: WebSocket, command: Command) {
+  async command(ws: Peer, command: Command) {
     if (!this.sockets.has(ws) || this.closed) throw new AppError(410, '连接已关闭');
     if (command.type === 'ping') {
       ws.send(JSON.stringify({ type: 'pong', at: command.at }));
@@ -168,7 +171,7 @@ export class RemoteSession {
     if (command.type === 'visibility') { this.stream.visible(ws, command.visible); return; }
     await this.enqueue(() => this.execute(ws, command));
   }
-  private async execute(ws: WebSocket, command: Command) {
+  private async execute(ws: Peer, command: Command) {
     if (this.closed || !this.sockets.has(ws)) throw new AppError(410, '连接已关闭');
     if (ws !== this.controller) throw new AppError(403, '当前连接为只读观察模式');
     if ((command.type === 'mouse' || command.type === 'key') && command.targetId && command.targetId !== this.activeTabId) {
@@ -256,12 +259,17 @@ export class BrowserService {
   private async launch(env: Environment): Promise<Runtime> {
     const path = join(this.config.dataDir, 'profiles', env.id);
     mkdirSync(path, { recursive: true });
-    const context = await chromium.launchPersistentContext(path, {
+    const proxy = await new NetworkPolicy(this.config.trustedNetworkOrigins).proxy(env.allowedOrigins);
+    let context: BrowserContext;
+    try { context = await chromium.launchPersistentContext(path, {
       headless: this.config.headless, channel: this.config.channel,
       viewport: { width: 1280, height: 800 }, acceptDownloads: false,
       serviceWorkers: 'block',
-      args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
-    });
+      proxy: { server: proxy.url, bypass: '<-loopback>' },
+      args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+        '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
+    }); } catch (error) { await proxy.close(); throw error; }
+    context.on('close', () => void proxy.close().catch(error => console.error('[proxy.close]', error)));
     try {
       await context.route('**/*', async route => {
         let permitted = false;
@@ -284,7 +292,8 @@ export class BrowserService {
       return runtime;
     } catch (error) { await context.close(); throw error; }
   }
-  async create(env: Environment, user: User) {
+  async create(env: Environment, user: User, sessionId?: string) {
+    if (env.paused) throw new AppError(409, '环境已暂停共享');
     if (this.closed || this.stopping.has(env.id)) throw new AppError(409, '账号环境正在停止');
     const used = [...this.sessions.values()].filter(session => session.env.id === env.id).length;
     const pending = this.pending.get(env.id) || 0;
@@ -299,7 +308,7 @@ export class BrowserService {
     try {
       const runtime = await this.runtime(env);
       if (this.closed || this.stopping.has(env.id)) throw new AppError(409, '账号环境正在停止');
-      session = new RemoteSession(env, user, runtime.context);
+      session = new RemoteSession(env, user, runtime.context, sessionId);
       const id = session.id;
       session.onClosed = () => { this.sessions.delete(id); runtime.lastUsed = Date.now(); };
       await session.initialize();
@@ -314,8 +323,23 @@ export class BrowserService {
   }
   get(id: string, user: User) {
     const session = this.sessions.get(id);
-    if (!session || (user.role !== 'admin' && session.user.id !== user.id)) throw new AppError(404, '窗口不存在');
+    if (!session || (user.role !== 'admin' && session.user.id !== user.id && session.env.ownerId !== user.id)) throw new AppError(404, '窗口不存在');
     return session;
+  }
+  async importState(env: Environment, state: StorageState) {
+    if (this.runtimes.has(env.id)) throw new AppError(409, '只能导入到全新的环境');
+    try {
+      const runtime = await this.runtime(env);
+      // Playwright 1.61 restores structured data, including its IndexedDB serialization, itself.
+      await runtime.context.setStorageState(state);
+    } catch (error) { await this.stopEnvironment(env.id); throw error; }
+  }
+  discardNewProfile(id: string) {
+    if (!/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/.test(id)) throw new Error('Invalid environment ID');
+    const root = resolve(this.config.dataDir, 'profiles');
+    const path = resolve(root, id);
+    if (!path.startsWith(root + sep)) throw new Error('Profile path outside data directory');
+    rmSync(path, { recursive: true, force: true });
   }
   status(envId: string) { return this.runtimes.has(envId) ? 'running' : 'stopped'; }
   async stopEnvironment(envId: string) {

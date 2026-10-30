@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { HttpBindings } from '@hono/node-server';
@@ -8,25 +9,27 @@ import type { Server } from 'node:http';
 import { z, ZodError } from 'zod';
 import type { Config } from './config.js';
 import { Store, type User } from './store.js';
-import { BrowserService } from './browser.js';
+import { BrowserPool } from './browser-pool.js';
 import { AppError, allowedUrl, commandSchema, normalizedOrigin } from './protocol.js';
 import { ConnectionTickets } from './connection-auth.js';
+import { NetworkPolicy } from './network-policy.js';
+import { agentWebSocketUrl, environmentInputSchema } from './agent-protocol.js';
+import { IMPORT_LIMIT, parseStorageState } from './storage-state.js';
 
 const COOKIE = 'relayhub_session';
 const userSchema = z.object({ username: z.string().regex(/^[a-zA-Z0-9_-]{2,40}$/),
   password: z.string().min(12).max(256), role: z.enum(['admin', 'member']).default('member'),
   environmentIds: z.array(z.string().uuid()).max(50).default([]) });
-const environmentSchema = z.object({ name: z.string().trim().min(1).max(80),
-  startUrl: z.url().max(4096), allowedOrigins: z.array(z.url().max(4096)).min(1).max(50),
-  maxSessions: z.number().int().min(1).max(30).default(8) });
+const environmentSchema = environmentInputSchema;
 type Variables = { user: User; token: string };
 
 export function createApp(config: Config) {
   const store = new Store(config);
-  const browsers = new BrowserService(config);
+  const browsers = new BrowserPool(config, store);
   const app = new Hono<{ Variables: Variables; Bindings: HttpBindings }>();
   const attempts = new Map<string, { count: number; until: number }>();
   const tickets = new ConnectionTickets();
+  const importing = new Set<string>();
   const allowedOrigin = (origin: string | undefined) => Boolean(origin && (origin === config.origin || config.frontendOrigins?.includes(origin)));
   const cleanAttempts = setInterval(() => {
     for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key);
@@ -61,6 +64,7 @@ export function createApp(config: Config) {
     credentials: false,
     maxAge: 600,
   }));
+  app.use('/api/*', bodyLimit({ maxSize: IMPORT_LIMIT, onError: c => c.json({ error: '请求超过 2 MiB 限制' }, 413) }));
   app.get('/api/health', c => c.json({ status: 'ok', version: '0.1.0' }));
   app.post('/api/login', async c => {
     const input = z.object({ username: z.string().max(40), password: z.string().max(256),
@@ -113,14 +117,14 @@ export function createApp(config: Config) {
   app.get('/api/environments', c => {
     const user = c.get('user');
     return c.json({ environments: store.environments().filter(env => store.hasAccess(user, env.id)).map(env => ({
-      ...env, status: browsers.status(env.id),
+      ...env, status: env.paused ? 'paused' : browsers.status(env.id), canManage: store.canManage(user, env.id),
       sessions: [...browsers.sessions.values()].filter(session => session.env.id === env.id).length,
     })) });
   });
   app.get('/api/sessions', c => {
     const user = c.get('user');
     return c.json({ sessions: [...browsers.sessions.values()]
-      .filter(session => user.role === 'admin' || session.user.id === user.id).map(session => session.summary()) });
+      .filter(session => store.hasAccess(user, session.env.id) && (store.canManage(user, session.env.id) || session.user.id === user.id)).map(session => session.summary()) });
   });
   app.get('/api/sessions/:id', c => {
     const user = c.get('user');
@@ -143,17 +147,17 @@ export function createApp(config: Config) {
     if (!env || !store.hasAccess(user, env.id)) throw new AppError(404, '账号环境不存在');
     const session = await browsers.create(env, user);
     // Permission may have been revoked while Chromium was starting.
-    if (!store.user(user.id)?.enabled || !store.environment(env.id) || !store.hasAccess(user, env.id)) {
+    if (!store.user(user.id)?.enabled || !store.environment(env.id) || store.environment(env.id)?.paused || !store.hasAccess(user, env.id)) {
       await session.close('权限已撤销');
       throw new AppError(403, '权限已撤销');
     }
-    store.audit(user.id, 'session.create', session.id);
+    store.audit(user.id, 'session.create', session.id, env.id);
     return c.json({ session: session.summary() }, 201);
   });
   app.delete('/api/sessions/:id', async c => {
     const session = browsers.get(c.req.param('id'), c.get('user'));
     await session.close();
-    store.audit(c.get('user').id, 'session.close', session.id);
+    store.audit(c.get('user').id, 'session.close', session.id, session.env.id);
     return c.json({ ok: true });
   });
   app.use('/api/admin/*', async (c, next) => {
@@ -176,7 +180,9 @@ export function createApp(config: Config) {
     if (!store.user(id)) throw new AppError(404, '成员不存在');
     store.disableUser(id);
     disconnectUser(id, '成员已停用');
-    for (const session of [...browsers.sessions.values()]) if (session.user.id === id) await session.close('成员已停用');
+    for (const session of [...browsers.sessions.values()]) if (session.user.id === id || session.env.ownerId === id) await session.close('成员已停用');
+    for (const env of store.environments()) if (env.ownerId === id) await browsers.stopEnvironment(env.id);
+    for (const env of store.environments()) if (env.ownerId === id) browsers.agents.disconnect(env.id);
     store.audit(c.get('user').id, 'user.disable', id);
     return c.json({ ok: true });
   });
@@ -185,7 +191,7 @@ export function createApp(config: Config) {
     const environmentId = c.req.param('environmentId');
     if (!store.user(id) || !store.environment(environmentId)) throw new AppError(404, '成员或环境不存在');
     store.grant(id, environmentId);
-    store.audit(c.get('user').id, 'grant.add', `${id}:${environmentId}`);
+    store.audit(c.get('user').id, 'grant.add', id, environmentId);
     return c.json({ ok: true });
   });
   app.delete('/api/admin/users/:id/grants/:environmentId', async c => {
@@ -195,46 +201,133 @@ export function createApp(config: Config) {
     for (const session of [...browsers.sessions.values()]) {
       if (session.user.id === id && session.env.id === environmentId) await session.close('环境访问权限已撤销');
     }
-    store.audit(c.get('user').id, 'grant.revoke', `${id}:${environmentId}`);
+    store.audit(c.get('user').id, 'grant.revoke', id, environmentId);
     return c.json({ ok: true });
   });
-  app.post('/api/admin/environments', async c => {
-    const input = environmentSchema.parse(await c.req.json());
+  async function environmentInput(value: unknown) {
+    const input = environmentSchema.parse(value);
     const origins = [...new Set(input.allowedOrigins.map(normalizedOrigin))];
     if (origins.some(allowedOrigin)) throw new AppError(400, '不能把 RelayHub 门户入口加入远程浏览器环境');
     allowedUrl(input.startUrl, origins);
-    const env = store.addEnvironment({ ...input, allowedOrigins: origins });
+    await new NetworkPolicy(config.trustedNetworkOrigins).validate(origins);
+    return { ...input, allowedOrigins: origins };
+  }
+  function managed(id: string, user: User) {
+    if (!store.canManage(user, id)) throw new AppError(404, '账号环境不存在');
+    if (importing.has(id)) throw new AppError(409, '会话状态正在导入，请稍后操作');
+    return store.environment(id)!;
+  }
+  app.get('/api/members', c => c.json({ members: store.users().filter(user => user.enabled).map(({ id, username }) => ({ id, username })) }));
+  app.get('/api/environments/:id/grants', c => {
+    managed(c.req.param('id'), c.get('user'));
+    return c.json({ members: store.environmentGrants(c.req.param('id')) });
+  });
+  app.get('/api/environments/:id/audit', c => {
+    managed(c.req.param('id'), c.get('user'));
+    return c.json({ entries: store.environmentAudits(c.req.param('id')) });
+  });
+  app.put('/api/environments/:id/grants/:userId', c => {
+    const env = managed(c.req.param('id'), c.get('user'));
+    const member = store.user(c.req.param('userId'));
+    if (!member?.enabled) throw new AppError(404, '成员不存在或已停用');
+    store.grant(member.id, env.id);
+    store.audit(c.get('user').id, 'grant.add', member.id, env.id);
+    return c.json({ ok: true });
+  });
+  app.delete('/api/environments/:id/grants/:userId', async c => {
+    const env = managed(c.req.param('id'), c.get('user'));
+    const userId = c.req.param('userId');
+    store.revoke(userId, env.id);
+    for (const session of [...browsers.sessions.values()]) if (session.env.id === env.id && session.user.id === userId) await session.close('环境访问权限已撤销');
+    store.audit(c.get('user').id, 'grant.revoke', userId, env.id);
+    return c.json({ ok: true });
+  });
+  app.post('/api/environments/:id/pause', async c => {
+    const env = managed(c.req.param('id'), c.get('user'));
+    const { paused } = z.object({ paused: z.boolean() }).strict().parse(await c.req.json());
+    // Commit the gate before awaiting teardown; concurrent creates must fail.
+    store.pauseEnvironment(env.id, paused);
+    if (paused) await browsers.stopEnvironment(env.id);
+    store.audit(c.get('user').id, paused ? 'environment.pause' : 'environment.resume', env.id, env.id);
+    return c.json({ ok: true });
+  });
+  app.post('/api/environments/:id/agent-key', c => {
+    const env = managed(c.req.param('id'), c.get('user'));
+    if (env.kind !== 'local') throw new AppError(400, '只有本地环境可以配对设备');
+    try { agentWebSocketUrl(config.origin, config.agentInsecureLoopback); }
+    catch { throw new AppError(400, '设备连接需要部署 HTTPS；本机开发需显式启用 RELAY_AGENT_INSECURE_LOOPBACK'); }
+    browsers.agents.disconnect(env.id);
+    const token = store.issueAgentKey(env.id);
+    store.audit(c.get('user').id, 'agent.key.rotate', env.id, env.id);
+    return c.json({ version: 1, server: config.origin, environmentId: env.id, token });
+  });
+  app.delete('/api/environments/:id/agent-key', c => {
+    const env = managed(c.req.param('id'), c.get('user'));
+    store.revokeAgentKey(env.id); browsers.agents.disconnect(env.id);
+    store.audit(c.get('user').id, 'agent.key.revoke', env.id, env.id);
+    return c.json({ ok: true });
+  });
+  app.post('/api/environments/import', async c => {
+    const input = z.object({ environment: environmentSchema, storageState: z.unknown(),
+      confirmSharedIdentity: z.literal(true) }).strict().parse(await c.req.json());
+    const environment = await environmentInput(input.environment);
+    const state = parseStorageState(input.storageState, environment.allowedOrigins);
+    const env = store.addEnvironment({ ...environment, ownerId: c.get('user').id, kind: 'server' });
+    importing.add(env.id);
+    store.pauseEnvironment(env.id, true);
+    try {
+      await browsers.server.importState(env, state);
+      if (!store.user(env.ownerId)?.enabled || !store.environment(env.id)) throw new Error('Owner disabled or environment deleted');
+      store.pauseEnvironment(env.id, false);
+    } catch {
+      await browsers.stopEnvironment(env.id);
+      store.deleteEnvironment(env.id);
+      browsers.server.discardNewProfile(env.id);
+      throw new AppError(400, '会话导入失败；新环境和导入资料已清理，请检查导出格式与网站支持情况');
+    } finally { importing.delete(env.id); }
+    store.audit(c.get('user').id, 'environment.import', env.id, env.id);
+    return c.json({ environment: store.environment(env.id) }, 201);
+  });
+  for (const base of ['/api/environments', '/api/admin/environments']) {
+  app.post(base, async c => {
+    const value = await c.req.json();
+    const kind = z.enum(['server', 'local']).default('server').parse(value.kind);
+    const input = await environmentInput(value);
+    const env = store.addEnvironment({ ...input, kind, ownerId: c.get('user').id });
     store.audit(c.get('user').id, 'environment.create', env.id);
     return c.json({ environment: env }, 201);
   });
-  app.put('/api/admin/environments/:id', async c => {
-    const id = c.req.param('id');
-    if (!store.environment(id)) throw new AppError(404, '账号环境不存在');
-    const input = environmentSchema.parse(await c.req.json());
-    const origins = [...new Set(input.allowedOrigins.map(normalizedOrigin))];
-    if (origins.some(allowedOrigin)) throw new AppError(400, '不能把 RelayHub 门户入口加入远程浏览器环境');
-    allowedUrl(input.startUrl, origins);
+  app.put(`${base}/:id`, async c => {
+    const id = c.req.param('id')!;
+    managed(id, c.get('user'));
+    const input = await environmentInput(await c.req.json());
     await browsers.stopEnvironment(id);
-    const env = store.updateEnvironment(id, { ...input, allowedOrigins: origins });
+    const env = store.updateEnvironment(id, input);
     store.audit(c.get('user').id, 'environment.update', id);
     return c.json({ environment: env });
   });
-  app.post('/api/admin/environments/:id/stop', async c => {
-    await browsers.stopEnvironment(c.req.param('id'));
-    store.audit(c.get('user').id, 'environment.stop', c.req.param('id'));
+  app.post(`${base}/:id/stop`, async c => {
+    const env = managed(c.req.param('id')!, c.get('user'));
+    await browsers.stopEnvironment(env.id);
+    store.audit(c.get('user').id, 'environment.stop', env.id);
     return c.json({ ok: true });
   });
-  app.delete('/api/admin/environments/:id', async c => {
-    const id = c.req.param('id');
+  app.delete(`${base}/:id`, async c => {
+    const id = c.req.param('id')!;
+    managed(id, c.get('user'));
     await browsers.stopEnvironment(id);
+    browsers.agents.disconnect(id);
     store.deleteEnvironment(id);
     // Profile data is deliberately preserved; deletion does not silently erase account cookies.
     store.audit(c.get('user').id, 'environment.delete', id);
     return c.json({ ok: true });
   });
-  app.post('/api/admin/sessions/:id/revoke-control', async c => {
-    await browsers.get(c.req.param('id'), c.get('user')).revokeControl();
-    store.audit(c.get('user').id, 'control.revoke', c.req.param('id'));
+  }
+  for (const base of ['/api/sessions', '/api/admin/sessions']) app.post(`${base}/:id/revoke-control`, async c => {
+    const session = browsers.get(c.req.param('id')!, c.get('user'));
+    managed(session.env.id, c.get('user'));
+    await session.revokeControl();
+    store.audit(c.get('user').id, 'control.revoke', session.id, session.env.id);
     return c.json({ ok: true });
   });
   app.get('/api/admin/audit', c => c.json({ entries: store.audits() }));
@@ -242,6 +335,7 @@ export function createApp(config: Config) {
   app.use('/*', serveStatic({ root: './public', index: 'index.html' }));
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 24_000 });
+  const agentWss = new WebSocketServer({ noServer: true, maxPayload: 2_100_000, perMessageDeflate: false });
   const connections = new Map<WebSocket, { userId: string; token: string; alive: boolean }>();
   function disconnectUser(id: string, reason: string) {
     for (const [ws, connection] of connections) if (connection.userId === id) ws.close(4003, reason);
@@ -259,6 +353,16 @@ export function createApp(config: Config) {
     server.on('upgrade', (req, socket, head) => {
       const reject = (status: number) => { socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\n\r\n`); };
       try {
+        if (req.url === '/ws/agent') {
+          if (req.headers.origin) { reject(403); return; }
+          agentWebSocketUrl(config.origin, config.agentInsecureLoopback);
+          const token = /^Bearer ([\w-]{43})$/.exec(req.headers.authorization || '')?.[1];
+          const env = token && store.authenticateAgent(token);
+          if (!env || !token) { reject(401); return; }
+          if (browsers.agents.connected(env.id)) { reject(409); return; }
+          agentWss.handleUpgrade(req, socket, head, ws => browsers.agents.accept(ws, token, env));
+          return;
+        }
         if (!allowedOrigin(req.headers.origin)) { reject(403); return; }
         const url = new URL(req.url || '/', config.origin);
         const match = /^\/ws\/sessions\/([\da-f-]+)$/.exec(url.pathname);
@@ -285,6 +389,7 @@ export function createApp(config: Config) {
           catch (error) { ws.close(4409, error instanceof Error ? error.message : '连接失败'); return; }
           const connection = { userId: user.id, token, alive: true };
           connections.set(ws, connection);
+          store.audit(user.id, control ? 'control.connect' : 'view.connect', session.id, session.env.id);
           let pending = 0;
           let detached = false;
           ws.on('pong', () => { connection.alive = true; });
@@ -299,7 +404,9 @@ export function createApp(config: Config) {
               const command = commandSchema.parse(JSON.parse(data.toString()));
               if (++pending > 100) { pending--; ws.close(1008, '控制队列已满'); return; }
               // The session owns operation ordering. Transport ACKs and pings bypass slow navigation.
-              void session.command(ws, command).catch(error => report(error)).finally(() => { pending--; });
+              void session.command(ws, command).then(() => {
+                if (['navigate', 'nav', 'tab'].includes(command.type)) store.audit(user.id, `browser.${command.type}`, session.id, session.env.id);
+              }).catch(error => report(error)).finally(() => { pending--; });
             } catch (error) { report(error); }
           });
           function report(error: unknown) {
@@ -309,6 +416,7 @@ export function createApp(config: Config) {
           ws.on('close', () => {
             detached = true;
             connections.delete(ws);
+            store.audit(user.id, 'connection.close', session.id, session.env.id);
             void session.detach(ws).catch(error => console.error('[detach]', error));
           });
           ws.on('error', error => console.error('[websocket]', error.message));
@@ -322,6 +430,7 @@ export function createApp(config: Config) {
     tickets.clear();
     for (const ws of connections.keys()) ws.terminate();
     await browsers.close();
+    await new Promise<void>(resolve => agentWss.close(() => resolve()));
     await new Promise<void>(resolve => wss.close(() => resolve()));
     store.close();
   }

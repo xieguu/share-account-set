@@ -27,6 +27,7 @@ test('real Chromium: shared account, independent input/frames, authorization and
     adminUser: 'admin', adminPassword: 'test-admin-password-123', headless: true,
     idleMs: 60_000, maxContexts: 4, lab: false, labPort: 3411,
   };
+  config.trustedNetworkOrigins = [labOrigin];
   const runtime = createApp(config);
   const server = serve({ fetch: runtime.app.fetch, hostname: '127.0.0.1', port: 0 }) as Server;
   runtime.attach(server);

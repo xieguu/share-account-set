@@ -5,6 +5,8 @@ import { createApp } from './app.js';
 import { startLab } from './lab.js';
 
 const config = loadConfig();
+if (config.lab) config.trustedNetworkOrigins = [...(config.trustedNetworkOrigins || []),
+  `http://${config.host === '0.0.0.0' ? '127.0.0.1' : config.host}:${config.labPort}`];
 const runtime = createApp(config);
 const server = serve({ fetch: runtime.app.fetch, hostname: config.host, port: config.port });
 runtime.attach(server as Server);

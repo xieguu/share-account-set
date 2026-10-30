@@ -1,5 +1,6 @@
 import type { CDPSession } from 'playwright';
 import { WebSocket } from 'ws';
+import type { Peer } from './peer.js';
 
 export const STREAM_PROFILES = {
   economy: { fps: 4, quality: 50 },
@@ -13,7 +14,7 @@ type Viewer = { visible: boolean; pending?: number; sentAt: number };
 
 /** Owns capture, duplicate suppression and one-frame-per-viewer flow control. */
 export class FrameStream {
-  private readonly viewers = new Map<WebSocket, Viewer>();
+  private readonly viewers = new Map<Peer, Viewer>();
   private target?: Target;
   private latest?: Frame;
   private timer?: NodeJS.Timeout;
@@ -45,19 +46,19 @@ export class FrameStream {
     // A previously decoded frame may still be acknowledged, but cannot block the new target.
     for (const viewer of this.viewers.values()) viewer.pending = undefined;
   }
-  add(ws: WebSocket) {
+  add(ws: Peer) {
     this.viewers.set(ws, { visible: true, sentAt: 0 });
     if (this.latest) this.send(ws, this.viewers.get(ws)!, this.latest);
     // A newly requested connection is an explicit attempt to restart a failed stream.
     this.failed = false;
     this.schedule();
   }
-  remove(ws: WebSocket) { this.viewers.delete(ws); this.schedule(); }
-  acknowledge(ws: WebSocket, sequence: number) {
+  remove(ws: Peer) { this.viewers.delete(ws); this.schedule(); }
+  acknowledge(ws: Peer, sequence: number) {
     const viewer = this.viewers.get(ws);
     if (viewer?.pending === sequence) viewer.pending = undefined;
   }
-  visible(ws: WebSocket, visible: boolean) {
+  visible(ws: Peer, visible: boolean) {
     const viewer = this.viewers.get(ws);
     if (!viewer || viewer.visible === visible) return;
     viewer.visible = visible;
@@ -79,7 +80,7 @@ export class FrameStream {
     this.timer.unref();
     void this.capture();
   }
-  private send(ws: WebSocket, viewer: Viewer, frame: Frame) {
+  private send(ws: Peer, viewer: Viewer, frame: Frame) {
     if (!viewer.visible || viewer.pending !== undefined || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 500_000) return false;
     viewer.pending = frame.sequence;
     viewer.sentAt = Date.now();

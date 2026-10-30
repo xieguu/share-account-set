@@ -7,7 +7,9 @@ import type { Config } from './config.js';
 export type User = { id: string; username: string; role: 'admin' | 'member'; enabled: number };
 export type Environment = {
   id: string; name: string; startUrl: string; allowedOrigins: string[]; maxSessions: number;
+  ownerId: string; kind: 'server' | 'local'; paused: number;
 };
+export type EnvironmentInput = Pick<Environment, 'name' | 'startUrl' | 'allowedOrigins' | 'maxSessions'>;
 type UserRow = User & { password: string };
 type EnvironmentRow = Omit<Environment, 'allowedOrigins'> & { allowedOrigins: string };
 
@@ -54,6 +56,22 @@ export class Store {
     if (!(this.db.prepare('SELECT id FROM users LIMIT 1').get())) {
       this.addUser(config.adminUser, config.adminPassword, 'admin');
     }
+    const columns = this.db.prepare('PRAGMA table_info(environments)').all() as { name: string }[];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!columns.some(column => column.name === 'ownerId')) {
+        this.db.exec("ALTER TABLE environments ADD COLUMN ownerId TEXT REFERENCES users(id)");
+        this.db.exec("UPDATE environments SET ownerId=(SELECT id FROM users WHERE role='admin' ORDER BY rowid LIMIT 1)");
+      }
+      if (!columns.some(column => column.name === 'kind')) this.db.exec("ALTER TABLE environments ADD COLUMN kind TEXT NOT NULL DEFAULT 'server'");
+      if (!columns.some(column => column.name === 'paused')) this.db.exec('ALTER TABLE environments ADD COLUMN paused INTEGER NOT NULL DEFAULT 0');
+      const auditColumns = this.db.prepare('PRAGMA table_info(audit)').all() as { name: string }[];
+      if (!auditColumns.some(column => column.name === 'environmentId')) this.db.exec('ALTER TABLE audit ADD COLUMN environmentId TEXT');
+      this.db.exec(`CREATE TABLE IF NOT EXISTS agent_keys (
+        environmentId TEXT PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE, tokenHash TEXT UNIQUE NOT NULL
+      ); CREATE INDEX IF NOT EXISTS audit_environment ON audit(environmentId, id);`);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.db.prepare('DELETE FROM logins WHERE expires < ?').run(Date.now());
   }
   addUser(username: string, password: string, role: User['role']): User {
@@ -94,7 +112,15 @@ export class Store {
   revoke(userId: string, environmentId: string) {
     this.db.prepare('DELETE FROM grants WHERE userId=? AND environmentId=?').run(userId, environmentId);
   }
-  hasAccess(user: User, id: string) { return user.role === 'admin' || this.grantIds(user.id).includes(id); }
+  canManage(user: User, id: string) {
+    const env = this.environment(id);
+    return !!env && !!user.enabled && (user.role === 'admin' || env.ownerId === user.id);
+  }
+  hasAccess(user: User, id: string) {
+    const env = this.environment(id);
+    return !!env && !!user.enabled && (user.role === 'admin' || (!!this.user(env.ownerId)?.enabled
+      && (env.ownerId === user.id || this.grantIds(user.id).includes(id))));
+  }
   disableUser(id: string) {
     this.db.prepare('UPDATE users SET enabled=0 WHERE id=?').run(id);
     this.db.prepare('DELETE FROM logins WHERE userId=?').run(id);
@@ -103,22 +129,42 @@ export class Store {
     return (this.db.prepare('SELECT * FROM environments ORDER BY name').all() as EnvironmentRow[])
       .map(row => ({ ...row, allowedOrigins: JSON.parse(row.allowedOrigins) }));
   }
-  environment(id: string) { return this.environments().find(env => env.id === id); }
-  addEnvironment(input: Omit<Environment, 'id'>): Environment {
-    const env = { id: randomUUID(), ...input };
-    this.db.prepare('INSERT INTO environments VALUES(?,?,?,?,?)')
-      .run(env.id, env.name, env.startUrl, JSON.stringify(env.allowedOrigins), env.maxSessions);
+  environment(id: string): Environment | undefined {
+    const row = this.db.prepare('SELECT * FROM environments WHERE id=?').get(id) as EnvironmentRow | undefined;
+    return row ? { ...row, allowedOrigins: JSON.parse(row.allowedOrigins) } : undefined;
+  }
+  addEnvironment(input: EnvironmentInput & Partial<Pick<Environment, 'ownerId' | 'kind'>>): Environment {
+    const ownerId = input.ownerId || (this.db.prepare("SELECT id FROM users WHERE role='admin' ORDER BY rowid LIMIT 1").get() as { id: string }).id;
+    const env: Environment = { ...input, id: randomUUID(), ownerId, kind: input.kind || 'server', paused: 0 };
+    this.db.prepare('INSERT INTO environments(id,name,startUrl,allowedOrigins,maxSessions,ownerId,kind,paused) VALUES(?,?,?,?,?,?,?,?)')
+      .run(env.id, env.name, env.startUrl, JSON.stringify(env.allowedOrigins), env.maxSessions, env.ownerId, env.kind, env.paused);
     return env;
   }
-  updateEnvironment(id: string, input: Omit<Environment, 'id'>): Environment {
+  updateEnvironment(id: string, input: EnvironmentInput): Environment {
     this.db.prepare('UPDATE environments SET name=?,startUrl=?,allowedOrigins=?,maxSessions=? WHERE id=?')
       .run(input.name, input.startUrl, JSON.stringify(input.allowedOrigins), input.maxSessions, id);
-    return { id, ...input };
+    return this.environment(id)!;
+  }
+  pauseEnvironment(id: string, paused: boolean) { this.db.prepare('UPDATE environments SET paused=? WHERE id=?').run(Number(paused), id); }
+  environmentGrants(id: string) {
+    return this.db.prepare('SELECT u.id,u.username,u.enabled FROM users u JOIN grants g ON u.id=g.userId WHERE g.environmentId=? ORDER BY u.username').all(id);
+  }
+  issueAgentKey(id: string) {
+    const token = randomBytes(32).toString('base64url');
+    this.db.prepare('INSERT INTO agent_keys VALUES(?,?) ON CONFLICT(environmentId) DO UPDATE SET tokenHash=excluded.tokenHash').run(id, tokenHash(token));
+    return token;
+  }
+  revokeAgentKey(id: string) { this.db.prepare('DELETE FROM agent_keys WHERE environmentId=?').run(id); }
+  authenticateAgent(token: string) {
+    const row = this.db.prepare('SELECT environmentId FROM agent_keys WHERE tokenHash=?').get(tokenHash(token)) as { environmentId: string } | undefined;
+    const env = row && this.environment(row.environmentId);
+    return env?.kind === 'local' && this.user(env.ownerId)?.enabled ? env : undefined;
   }
   deleteEnvironment(id: string) { this.db.prepare('DELETE FROM environments WHERE id=?').run(id); }
-  audit(userId: string, action: string, objectId: string) {
-    this.db.prepare('INSERT INTO audit(userId,action,objectId) VALUES(?,?,?)').run(userId, action, objectId);
+  audit(userId: string, action: string, objectId: string, environmentId?: string) {
+    this.db.prepare('INSERT INTO audit(userId,action,objectId,environmentId) VALUES(?,?,?,?)').run(userId, action, objectId, environmentId || null);
   }
+  environmentAudits(id: string) { return this.db.prepare('SELECT * FROM audit WHERE environmentId=? OR objectId=? ORDER BY id DESC LIMIT 100').all(id, id); }
   audits() { return this.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 100').all(); }
   close() { this.db.close(); }
 }

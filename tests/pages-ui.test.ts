@@ -25,6 +25,7 @@ test('Pages artifact and cross-site workspace: two members share login with sepa
   const config: Config = { host: '127.0.0.1', port: 3410, origin: 'http://127.0.0.1:3410', frontendOrigins: [],
     dataDir: mkdtempSync(resolve('test-results/pages-')), adminUser: 'admin', adminPassword: 'pages-admin-password-123',
     headless: true, idleMs: 60_000, maxContexts: 2, lab: false, labPort: 3411 };
+  config.trustedNetworkOrigins = [labOrigin];
   const runtime = createApp(config);
   const server = serve({ fetch: runtime.app.fetch, hostname: '127.0.0.1', port: 0 }) as Server;
   runtime.attach(server);

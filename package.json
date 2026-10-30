@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "dev": "node --env-file=.env --import tsx src/index.ts",
@@ -11,18 +13,22 @@
     "build:pages": "node scripts/build-pages.mjs",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "check": "tsc --noEmit",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.ts"
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "agent": "node dist/agent-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
     "hono": "^4.10.0",
+    "ipaddr.js": "^2.5.0",
     "playwright": "1.61.1",
+    "proxy-chain": "^3.0.1",
     "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.0",
+    "selfsigned": "^5.5.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }

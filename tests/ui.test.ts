@@ -17,6 +17,7 @@ test('management UI and real remote canvas: two users, text, shortcuts, IME and 
   const labOrigin=`http://127.0.0.1:${(lab.address() as AddressInfo).port}`;
   const config: Config={host:'127.0.0.1',port:3410,origin:'http://127.0.0.1:3410',dataDir:mkdtempSync(resolve('test-results/ui-')),
     adminUser:'admin',adminPassword:'ui-admin-password-123',headless:true,idleMs:60_000,maxContexts:3,lab:false,labPort:3411};
+  config.trustedNetworkOrigins = [labOrigin];
   const runtime=createApp(config);
   runtime.store.addEnvironment({name:'共享验证环境',startUrl:`${labOrigin}/`,allowedOrigins:[labOrigin],maxSessions:3});
   const server=serve({fetch:runtime.app.fetch,hostname:'127.0.0.1',port:0}) as Server;runtime.attach(server);
