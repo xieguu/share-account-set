@@ -6,12 +6,14 @@
 The original license is retained at `src/vendor/remotebrowser/LICENSE`.
 
 RelayHub modifies keyboard dispatch to use a single CDP path with explicit key
-down/up events and Enter character dispatch. The original silent Playwright-to-CDP fallback is removed.
+down/up events, Enter character dispatch, and explicit Chromium select-all commands
+for Ctrl+A / Command+A across host operating systems. The original silent Playwright-to-CDP fallback is removed.
 Browser-context ownership, persistence, authentication, permission assignment,
 page capture, and the management interface are RelayHub integration code.
 
 Runtime dependencies: Playwright (Apache-2.0), Hono and @hono/node-server (MIT),
-ws (MIT), Zod (MIT). Exact installed versions are recorded in package-lock.json.
+ws (MIT), Zod (MIT), proxy-chain (Apache-2.0), ipaddr.js (MIT).
+Exact installed versions are recorded in package-lock.json.
 
 Design references supplied in the project brief:
 

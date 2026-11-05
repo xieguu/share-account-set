@@ -149,12 +149,18 @@ export async function dispatchCdpKeyEvent(_page: Page, cdp: CDPSession, keyMsg: 
   }
 
   const enterText = keyMsg.key === 'Enter' && !keyMsg.modifiers?.ctrl && !keyMsg.modifiers?.meta && !keyMsg.modifiers?.alt
+  // Viewers and the remote browser may run on different operating systems.
+  // Route both common select-all shortcuts to Chromium's explicit editing command.
+  const selectAll = keyMsg.event === 'down' && keyMsg.key.toLowerCase() === 'a'
+    && (keyMsg.modifiers?.ctrl || keyMsg.modifiers?.meta)
+    && !keyMsg.modifiers?.alt && !keyMsg.modifiers?.shift
   const type = keyMsg.event === 'up' ? 'keyUp' : enterText ? 'keyDown' : 'rawKeyDown'
   await cdp.send('Input.dispatchKeyEvent', {
     type,
     key: keyMsg.key,
     code: keyMsg.code || '',
     windowsVirtualKeyCode: keyMsg.keyCode || 0,
+    ...(selectAll ? { commands: ['selectAll'] } : {}),
     ...(keyMsg.event !== 'up' && enterText ? { text: '\r', unmodifiedText: '\r' } : keyMsg.text ? { text: keyMsg.text } : {}),
     modifiers
   })

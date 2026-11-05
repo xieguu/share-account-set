@@ -101,6 +101,9 @@ test('management UI and real remote canvas: two users, text, shortcuts, IME and 
   await memberViewer.keyboard.press('Control+a');
   await memberViewer.keyboard.insertText('Shortcut selected');
   await valueIs(memberSession,'#text','Shortcut selected');
+  await memberViewer.keyboard.press('Meta+a');
+  await memberViewer.keyboard.insertText('Command selected');
+  await valueIs(memberSession,'#text','Command selected');
   await memberViewer.keyboard.press('Control+a');
   await memberViewer.locator('#keyboard').evaluate(element=>{
     const textarea=element as HTMLTextAreaElement;
