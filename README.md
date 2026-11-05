@@ -40,19 +40,19 @@
 ```bash
 git clone -b page https://github.com/xieguu/share-account-set.git
 cd share-account-set
-npm ci
-npm run setup
-npx playwright install chromium
-npm run dev
+npm run local -- --with-agent
 ```
 
 打开 **[http://127.0.0.1:3410](http://127.0.0.1:3410)**。
 
+启动命令自动安装锁定版本的依赖、安装 Chromium、生成或保留 `.env`、编译并运行服务。`--with-agent` 只为本次启动显式开启数字回环 HTTP 的 Agent 开发连接；公网设备使用 HTTPS/WSS。安装与构建完成后可用 `npm start` 日常启动。完整操作见 [最短启动路径](docs/QUICK_START.md)。
+
 `npm run setup` 生成本地 `.env` 和随机管理员密码；已有配置会保留。查看其中的 `RELAY_ADMIN_USER`、`RELAY_ADMIN_PASSWORD`，登录工作台。管理员凭据仅在首次初始化数据库时使用，之后修改 `.env` 不会重置已有账号密码。
 
-Linux 如果缺少 Chromium 系统依赖，将浏览器安装命令替换为：
+Linux 如果缺少 Chromium 系统依赖，先运行以下命令，再运行本机启动命令：
 
 ```bash
+npm ci
 npx playwright install --with-deps chromium
 ```
 

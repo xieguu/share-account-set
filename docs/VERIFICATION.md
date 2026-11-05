@@ -2,6 +2,15 @@
 
 [返回 README](../README.md) · [English README](../README.en.md)
 
+## 2026-11-06 启动路径验证
+
+- 在 Windows 实际运行 `npm run local -- --with-agent`，完成依赖与 Chromium 安装、生产构建，启动 `127.0.0.1:3410` 后端与 `3411` 验证站。
+- 使用真实浏览器登录这个运行中的后端，确认三种环境创建选项可用，退出后登录页恢复；凭据没有写入日志或提交。
+- `npm run check`、Pages 构建、启动脚本语法检查通过；成员界面与 Pages 跨站真实浏览器测试共 2 项通过。
+- 新增 [runtime.yml](../.github/workflows/runtime.yml)，在 Windows、Ubuntu、macOS 执行完整运行检查。各系统是否通过以 [Actions 结果](https://github.com/xieguu/share-account-set/actions/workflows/runtime.yml) 为准。
+
+以下为三种接入方式交付时的完整测试记录。
+
 验证日期：2026-10-30。环境：Windows、Node.js 24.14.0、Playwright 1.61.1、配套 Chromium 149。
 
 ## 复现命令与结果

@@ -40,19 +40,19 @@ Install **Node.js 24 or later**, npm, and Git. Run in Windows PowerShell, macOS,
 ```bash
 git clone -b page https://github.com/xieguu/share-account-set.git
 cd share-account-set
-npm ci
-npm run setup
-npx playwright install chromium
-npm run dev
+npm run local -- --with-agent
 ```
 
 Open **[http://127.0.0.1:3410](http://127.0.0.1:3410)**.
+
+This command installs locked dependencies and Chromium, preserves or creates `.env`, builds, and starts the complete workspace. `--with-agent` explicitly enables numeric-loopback HTTP Agent connections for this run; remote devices use HTTPS/WSS. After setup, `npm start` runs the existing build. See the [local and public deployment guide](docs/QUICK_START.md).
 
 Setup creates a local `.env` with a random administrator password and preserves any existing configuration. Use `RELAY_ADMIN_USER` and `RELAY_ADMIN_PASSWORD` to sign in. These credentials initialize the database only; editing `.env` later does not reset an existing password. The application interface is currently in Simplified Chinese.
 
 On Linux, install missing browser system dependencies with:
 
 ```bash
+npm ci
 npx playwright install --with-deps chromium
 ```
 

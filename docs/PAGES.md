@@ -10,6 +10,8 @@ Pages 托管 HTML、CSS 和 JavaScript。用户设置自己的后端地址后，
 
 ## 配置后端
 
+没有服务器时先使用 [本机启动](QUICK_START.md)：在项目目录执行 `npm run local -- --with-agent`，打开 `http://127.0.0.1:3410` 使用完整工作台。公开的 HTTPS Pages 不能连接这个 HTTP 本机地址；部署 HTTPS 后端之后再从 Pages 连接。
+
 后端需要使用 `page` 分支的新接口，旧 `main` 版本不包含跨域登录和窗口票据。
 
 1. 按 [README](../README.md#deployment) 部署 Node.js 服务或 HTTPS Compose。

@@ -14,7 +14,8 @@
     "start": "node --env-file-if-exists=.env dist/index.js",
     "check": "tsc --noEmit",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
-    "agent": "node dist/agent-cli.js"
+    "agent": "node dist/agent-cli.js",
+    "local": "node scripts/local.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

@@ -254,6 +254,7 @@ for(const name of ['environment','member']) $(`#${name}-form`).onsubmit=async ev
 };
 function connectionStatus(message, online) {
   const connection=getConnection();
+  $('#setup-help').hidden=online || connection.requireBackend!==true;
   $('#connection-target').textContent=connection.backend || '尚未设置服务地址';
   $('#connection-state').textContent=message;
   $('#workspace-service-status span').textContent=online?'服务已连接':'连接待检查';
